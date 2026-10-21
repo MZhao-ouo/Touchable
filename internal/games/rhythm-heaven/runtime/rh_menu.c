@@ -16,6 +16,27 @@ static int can_drag;
 static uint64_t traced_owner;
 static uint64_t traced_hints;
 
+enum { RH_GLIDE_NONE, RH_GLIDE_LIST, RH_GLIDE_MAP };
+#define RH_GLIDE_START_SPEED 700.0f
+#define RH_GLIDE_STOP_SPEED 40.0f
+#define RH_GLIDE_MAX_SPEED 6000.0f
+#define RH_GLIDE_LIST_TAU 0.35f
+#define RH_GLIDE_MAP_TAU 0.30f
+#define RH_GLIDE_SNAP_TAU 0.045f
+#define RH_GLIDE_MAX_STEP_NS 50000000ull
+#define RH_GLIDE_MAX_GAP_NS 100000000ull
+
+typedef struct {
+    int surface;
+    uint64_t owner, token, time;
+    float vx, vy;
+    int snapping;
+    float target;
+} rh_glide_state;
+
+static rh_motion motion;
+static rh_glide_state glide;
+
 static void pointer_snapshot(const ss_pointer_frame *frame, const char *path) {
     char temporary[1024]; snprintf(temporary, sizeof temporary, "%s.tmp", path);
     FILE *file = fopen(temporary, "w");
@@ -78,7 +99,7 @@ static void *pointer_file(void *argument) {
                         if (bit >= 0 && bit < 64) { held = 1ull << bit; held_token = frame.token; ss_input_set(held, 0, 0); }
                     } else if (held) {
                         if (type == SS_POINTER_UP || type == SS_POINTER_CANCEL) { ss_input_set(0, 0, 0); held = 0; }
-                    } else ss_pointer_push((ss_pointer_event){frame.token, type, x, y});
+                    } else ss_pointer_push((ss_pointer_event){frame.token, type, x, y, 0});
                     if (trace) LOG("POINTER test %llu type %d %.1f %.1f held %#llx", sequence, type, x,y,(unsigned long long)held);
                 } else if (held) { ss_input_set(0, 0, 0); held = 0; }
             }
@@ -162,8 +183,63 @@ static void trace_frame(const ss_pointer_frame *frame) {
             t->rect.x,t->rect.y,t->rect.width,t->rect.height,t->flags,t->button);
     }
 }
+static void glide_stop(void) {
+    if (trace && glide.surface) LOG("POINTER glide stop surface %d", glide.surface);
+    glide = (rh_glide_state){0};
+}
+static void glide_start(int surface, uint64_t owner, uint64_t token, uint64_t time, float vx, float vy) {
+    if (glide.surface) return;
+    float speed = surface == RH_GLIDE_LIST ? vy : vx;
+    if (!isfinite(speed) || fabsf(speed) < RH_GLIDE_START_SPEED) return;
+    speed = fmaxf(-RH_GLIDE_MAX_SPEED, fminf(RH_GLIDE_MAX_SPEED, speed));
+    glide = (rh_glide_state){surface, owner, token, time, surface == RH_GLIDE_MAP ? speed : 0,
+                             surface == RH_GLIDE_LIST ? speed : 0, 0, 0};
+    if (trace) LOG("POINTER glide start surface %d vx %.1f vy %.1f", surface, vx, vy);
+}
 static void reset_gesture(uint64_t token) {
-    if (gesture.token != token) { gesture = (ss_pointer_gesture){0}; can_drag = 0; }
+    if (gesture.token != token) {
+        gesture = (ss_pointer_gesture){0}; can_drag = 0;
+        rh_motion_reset(&motion); glide_stop();
+    }
+}
+static void list_apply_offset(void *list, float offset) {
+    float spacing = real(list, 0x4c);
+    if (!isfinite(spacing) || spacing == 0) return;
+    offset = rh_menu_scroll_limit(offset, integer(list, 0x20), integer(list, 0x44),
+                                  integer(list, 0x58), integer(list, 0x5c), spacing);
+    put_real(list, 0x50, offset); put_real(list, 0x54, offset);
+    put_int(list, 0x48, (int)lroundf(offset / spacing) + integer(list, 0x44) / 2);
+    ((void (*)(void *))(base + 0x135ab0))(list);
+}
+static void glide_list_step(void *list) {
+    uint64_t now = ss_pointer_time_ns();
+    uint64_t elapsed = now > glide.time ? now - glide.time : 0;
+    glide.time = now;
+    if (elapsed > RH_GLIDE_MAX_GAP_NS) { glide_stop(); return; }
+    if (elapsed > RH_GLIDE_MAX_STEP_NS) elapsed = RH_GLIDE_MAX_STEP_NS;
+    float spacing = real(list, 0x4c);
+    if (!isfinite(spacing) || fabsf(spacing) < 8) { glide_stop(); return; }
+    float offset = real(list, 0x50);
+    if (glide.snapping) {
+        float next = offset + (glide.target - offset) * (1 - expf(-(float)elapsed / 1e9f / RH_GLIDE_SNAP_TAU));
+        if (fabsf(glide.target - next) < 0.5f) next = glide.target;
+        list_apply_offset(list, next);
+        if (next == glide.target) glide_stop();
+        return;
+    }
+    rh_inertia_step_result step = rh_inertia_step(glide.vy, elapsed, RH_GLIDE_LIST_TAU);
+    glide.vy = step.velocity;
+    float wanted = offset - step.distance;
+    float clamped = rh_menu_scroll_limit(wanted, integer(list, 0x20), integer(list, 0x44),
+                                         integer(list, 0x58), integer(list, 0x5c), spacing);
+    int edge = fabsf(clamped - wanted) > 0.01f;
+    list_apply_offset(list, clamped);
+    if (!edge && fabsf(glide.vy) >= RH_GLIDE_STOP_SPEED) return;
+    /* Stop on a row. The list uses a row index, not a free offset. */
+    glide.snapping = 1;
+    glide.target = rh_menu_scroll_limit(lroundf(real(list, 0x50) / spacing) * spacing, integer(list, 0x20),
+                                        integer(list, 0x44), integer(list, 0x58), integer(list, 0x5c), spacing);
+    if (trace) LOG("POINTER glide snap %.1f to %.1f", real(list, 0x50), glide.target);
 }
 static int list_frame(void *list, int scroll, ss_pointer_frame *frame) {
     int count = integer(list, 0x20), selected = integer(list, 0x24);
@@ -207,15 +283,22 @@ static int list_input(void *list, void *pad, int scroll, uintptr_t original) {
         reset_gesture(frame.token);
         ss_pointer_event event;
         while (ss_pointer_take(frame.token, &event)) {
-            if (event.type == SS_POINTER_DOWN) can_drag = ss_pointer_contains(frame.scroll, event.x, event.y);
+            if (event.type == SS_POINTER_DOWN) {
+                glide_stop(); rh_motion_reset(&motion);
+                can_drag = ss_pointer_contains(frame.scroll, event.x, event.y);
+                if (can_drag) rh_motion_add(&motion, event.time, event.x, event.y);
+            }
+            if (event.type == SS_POINTER_CANCEL) { glide_stop(); rh_motion_reset(&motion); can_drag = 0; }
             ss_pointer_action action = ss_pointer_track(&gesture, event);
-            if ((action.flags & SS_POINTER_PAN) && scroll && can_drag) {
-                float spacing = real(list, 0x4c);
-                float offset = rh_menu_scroll_limit(real(list, 0x50) - action.dy, integer(list, 0x20), integer(list, 0x44),
-                                                    integer(list, 0x58), integer(list, 0x5c), spacing);
-                put_real(list, 0x50, offset); put_real(list, 0x54, offset);
-                put_int(list, 0x48, (int)lroundf(offset / spacing) + integer(list, 0x44) / 2);
-                ((void (*)(void *))(base + 0x135ab0))(list);
+            if (can_drag && (event.type == SS_POINTER_MOVE || event.type == SS_POINTER_UP))
+                rh_motion_add(&motion, event.time, event.x, event.y);
+            if ((action.flags & SS_POINTER_PAN) && scroll && can_drag)
+                list_apply_offset(list, real(list, 0x50) - action.dy);
+            if ((action.flags & SS_POINTER_FINISH) && scroll && can_drag && gesture.dragging) {
+                float vx = 0, vy = 0;
+                if (rh_motion_velocity(&motion, event.time, &vx, &vy))
+                    glide_start(RH_GLIDE_LIST, frame.owner, frame.token, event.time, vx, vy);
+                rh_motion_reset(&motion);
             }
             if (action.flags & SS_POINTER_TAP) {
                 int hit = ss_pointer_hit(&frame, action.x, action.y);
@@ -228,6 +311,10 @@ static int list_input(void *list, void *pad, int scroll, uintptr_t original) {
                     return 1;
                 }
             }
+        }
+        if (glide.surface == RH_GLIDE_LIST) {
+            if (glide.owner == frame.owner && glide.token == frame.token && scroll) glide_list_step(list);
+            else glide_stop();
         }
     }
     return ((int (*)(void *, void *))(base + original))(list, pad);
@@ -325,8 +412,24 @@ static void map_pan(void *scene, float dx) {
     put_real(scene, 0x52b4, 0); put_real(scene, 0x52b8, 0); put_real(scene, 0x52bc, 1);
     ((void (*)(void *, float, float))(base + 0x4fe260))((uint8_t *)stage + 8, x, real(stage, 0x1c));
 }
+static void glide_map_step(void *scene) {
+    uint64_t now = ss_pointer_time_ns();
+    uint64_t elapsed = now > glide.time ? now - glide.time : 0;
+    glide.time = now;
+    if (elapsed > RH_GLIDE_MAX_GAP_NS) { glide_stop(); return; }
+    if (elapsed > RH_GLIDE_MAX_STEP_NS) elapsed = RH_GLIDE_MAX_STEP_NS;
+    void *stage = ptr(scene, 0x4650);
+    if (!stage) { glide_stop(); return; }
+    rh_inertia_step_result step = rh_inertia_step(glide.vx, elapsed, RH_GLIDE_MAP_TAU);
+    glide.vx = step.velocity;
+    float before = real(stage, 0x18);
+    map_pan(scene, step.distance);
+    int edge = fabsf((real(stage, 0x18) - before) - step.distance) > 0.01f;
+    if (edge || fabsf(glide.vx) < RH_GLIDE_STOP_SPEED) glide_stop();
+}
 static void map_input(void *scene) {
     if (integer(scene, 0x5288) == 2) {
+        glide_stop();
         void *selector = ptr(scene, 0x6d68);
         if (selector) selector_input(selector, ptr(selector, 0x18), scene);
         map_tap.armed = 0;
@@ -343,10 +446,24 @@ static void map_input(void *scene) {
         }
         ss_pointer_event event;
         while (ss_pointer_take(frame.token, &event)) {
-            if (event.type == SS_POINTER_DOWN) can_drag = ss_pointer_contains(frame.scroll, event.x, event.y);
-            if (event.type == SS_POINTER_CANCEL) map_tap.armed = 0;
+            if (event.type == SS_POINTER_DOWN) {
+                glide_stop(); rh_motion_reset(&motion);
+                can_drag = ss_pointer_contains(frame.scroll, event.x, event.y);
+                if (can_drag) rh_motion_add(&motion, event.time, event.x, event.y);
+            }
+            if (event.type == SS_POINTER_CANCEL) {
+                map_tap.armed = 0; can_drag = 0; glide_stop(); rh_motion_reset(&motion);
+            }
             ss_pointer_action action = ss_pointer_track(&gesture, event);
+            if (can_drag && (event.type == SS_POINTER_MOVE || event.type == SS_POINTER_UP))
+                rh_motion_add(&motion, event.time, event.x, event.y);
             if ((action.flags & SS_POINTER_PAN) && can_drag) { map_tap.armed = 0; map_pan(scene, action.dx); }
+            if ((action.flags & SS_POINTER_FINISH) && can_drag && gesture.dragging) {
+                float vx = 0, vy = 0;
+                if (rh_motion_velocity(&motion, event.time, &vx, &vy))
+                    glide_start(RH_GLIDE_MAP, frame.owner, frame.token, event.time, vx, vy);
+                rh_motion_reset(&motion);
+            }
             if (action.flags & SS_POINTER_TAP) {
                 int hit = ss_pointer_hit(&frame, action.x, action.y);
                 if (hit < 0) { map_tap.armed = 0; continue; }
@@ -359,7 +476,11 @@ static void map_input(void *scene) {
                 return;
             }
         }
-    }
+        if (glide.surface == RH_GLIDE_MAP) {
+            if (glide.owner == frame.owner && glide.token == frame.token) glide_map_step(scene);
+            else glide_stop();
+        }
+    } else glide_stop();
     ((void (*)(void *))(base + 0x1d1410))(scene);
 }
 /* The pause menu uses the small selector widget, not the scrolling list class. */

@@ -27,7 +27,8 @@ typedef struct {
     ss_pointer_rect scroll;
     ss_pointer_target targets[SS_POINTER_MAX_TARGETS];
 } ss_pointer_frame;
-typedef struct { uint64_t token; int type; float x, y; } ss_pointer_event;
+/* ss_pointer_push sets time to the monotonic push time in nanoseconds. */
+typedef struct { uint64_t token; int type; float x, y; uint64_t time; } ss_pointer_event;
 typedef struct {
     uint64_t token;
     float start_x, start_y, last_x, last_y;
@@ -36,6 +37,7 @@ typedef struct {
 typedef struct { int flags; float x, y, dx, dy; } ss_pointer_action;
 
 /* A game publishes a frame on its input thread. The phone reads a copy. */
+uint64_t ss_pointer_time_ns(void);
 uint64_t ss_pointer_publish(const ss_pointer_frame *frame);
 int ss_pointer_read(ss_pointer_frame *frame);
 void ss_pointer_clear(void);

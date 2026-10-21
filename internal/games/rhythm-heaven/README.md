@@ -1,5 +1,30 @@
 # Rhythm Heaven
 
+## 2026-10-21: Touch inertia (build 40)
+
+A fast drag on a menu list or on the level map continues after the finger lifts.
+The speed decays smoothly.
+A list stops on a row.
+The map stops at its left or right edge.
+
+Each pointer event now has a time.
+The code uses the last 100 ms of movement to get the release speed.
+A list uses a 0.35 s decay.
+The map uses a 0.30 s decay.
+The glide starts at 700 game pixels per second or more.
+
+A new touch, a cancel, a mode change, or a change of list or map stops the glide.
+A list also stops at its first or last row.
+
+The change is in `runtime/rh_menu.c` and `runtime/rh_menu_logic.c`.
+The event time is in `internal/runtime/common/ss_pointer.c`.
+
+Check results:
+
+- `test_menu.c` passes. It checks the velocity fit, a hold before release, the 100 ms window, the decay, and the distance integral.
+- `test_pointer.c` passes.
+- No device test ran on this branch. The Mac host scripted input did not reach the start menu in the original check, so the glide has no host or device result.
+
 ## 2026-10-21: Cafe unlocked in the phone save
 
 The user reported that the cafe (咖啡店) could not be unlocked.
@@ -322,7 +347,7 @@ The records below do not include the short start check after this reorganization
 | Active content | `.touchable/work/rhythm-heaven/base/` |
 | Active modules | `.touchable/work/rhythm-heaven/patched/`, runs `main` and `sdk` |
 | Graphics | 1920×1080, NVN to Metal, 35 shader stages |
-| iPad/iPhone app | Build 35 (installed on the iPhone and the iPad mini on 2026-10-20), Bundle ID `com.mmmz.TouchableRhythmHeaven` (installed builds before 2026-10-20 use the previous Bundle ID. See [the rename record](../../../docs/developer/project-rename.md)) |
+| iPad/iPhone app | Build 40 (not installed. The iPhone and the iPad mini have build 35), Bundle ID `com.mmmz.TouchableRhythmHeaven` (installed builds before 2026-10-20 use the previous Bundle ID. See [the rename record](../../../docs/developer/project-rename.md)) |
 | Phone save | `Documents/Saves/RhythmHeaven` |
 | Play record | Multiple rhythm games, some Remixes, menus, and save read/write are recorded. The full play-through is not verified |
 | Direct touch | Normal lists, the map, pause options, the rhythm archive, the music room, and demo videos |

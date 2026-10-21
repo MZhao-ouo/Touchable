@@ -742,7 +742,7 @@ static NSString *buttonSymbol(int button) {
     updateInput();
 }
 - (void)cancelInput {
-    if (self.menuTouch) ss_pointer_push((ss_pointer_event){self.token, SS_POINTER_CANCEL, 0, 0});
+    if (self.menuTouch) ss_pointer_push((ss_pointer_event){self.token, SS_POINTER_CANCEL, 0, 0, 0});
     self.menuTouch = nil;
     [self.heldHints removeAllObjects];
     [self updateHints];
@@ -755,7 +755,7 @@ static NSString *buttonSymbol(int button) {
 - (void)sendTouch:(UITouch *)touch type:(int)type {
     float x = 0, y = 0;
     [self locate:[touch locationInView:self] x:&x y:&y];
-    ss_pointer_push((ss_pointer_event){self.token, type, x, y});
+    ss_pointer_push((ss_pointer_event){self.token, type, x, y, 0});
 }
 - (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
     [self refresh];

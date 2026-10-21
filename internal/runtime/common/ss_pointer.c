@@ -12,13 +12,13 @@ static _Atomic uint64_t wait_hold = SS_POINTER_WAIT_HOLD_NS;
 static ss_pointer_event queue[32];
 static unsigned queued;
 
-static uint64_t time_ns(void) {
+uint64_t ss_pointer_time_ns(void) {
     struct timespec value;
     clock_gettime(CLOCK_MONOTONIC, &value);
     return (uint64_t)value.tv_sec * 1000000000ull + value.tv_nsec;
 }
 uint64_t ss_pointer_publish(const ss_pointer_frame *frame) {
-    uint64_t now = time_ns();
+    uint64_t now = ss_pointer_time_ns();
     pthread_mutex_lock(&lock);
     if (frame->mode == SS_POINTER_HINTS && (current.mode == SS_POINTER_MENU || current.mode == SS_POINTER_MAP) &&
         now - published_at < 40000000ull) { pthread_mutex_unlock(&lock); return 0; }
@@ -36,7 +36,7 @@ uint64_t ss_pointer_publish(const ss_pointer_frame *frame) {
     return token;
 }
 int ss_pointer_read(ss_pointer_frame *frame) {
-    uint64_t now = time_ns();
+    uint64_t now = ss_pointer_time_ns();
     pthread_mutex_lock(&lock);
     int valid = current.mode && now - published_at <= 250000000ull;
     *frame = valid ? current : (ss_pointer_frame){0};
@@ -44,7 +44,7 @@ int ss_pointer_read(ss_pointer_frame *frame) {
     return valid;
 }
 int ss_pointer_controls(void) {
-    uint64_t now = time_ns();
+    uint64_t now = ss_pointer_time_ns();
     pthread_mutex_lock(&lock);
     uint64_t age = now - published_at;
     int mode = published_at ? current.mode : SS_POINTER_NONE, result = SS_CONTROLS_SHOW;   /* no frame: the default */
@@ -63,12 +63,13 @@ void ss_pointer_clear(void) {
     pthread_mutex_unlock(&lock);
 }
 void ss_pointer_push(ss_pointer_event event) {
+    event.time = ss_pointer_time_ns();
     if (!isfinite(event.x) || !isfinite(event.y) || event.type < SS_POINTER_DOWN || event.type > SS_POINTER_CANCEL) return;
     pthread_mutex_lock(&lock);
     if (event.token == current.token && current.mode) {
         /* Keep reversals. A drag that returns to its start must not become a tap. */
         if (queued < sizeof queue / sizeof queue[0]) queue[queued++] = event;
-        else { queued = 1; queue[0] = (ss_pointer_event){event.token, SS_POINTER_CANCEL, event.x, event.y}; }
+        else { queued = 1; queue[0] = (ss_pointer_event){event.token, SS_POINTER_CANCEL, event.x, event.y, event.time}; }
     }
     pthread_mutex_unlock(&lock);
 }

@@ -1077,7 +1077,7 @@ static void *test_file(void *argument) {
                         held_button = 0;
                         ss_input_set(0, 0, 0);
                     } else if (!held_button) {
-                        ss_pointer_push((ss_pointer_event){frame.token, type, x, y});
+                        ss_pointer_push((ss_pointer_event){frame.token, type, x, y, 0});
                     }
                 }
                 LOG("TOUCH UI test %llu type %d %.1f %.1f", sequence, type, x, y);

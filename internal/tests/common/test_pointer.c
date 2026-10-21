@@ -6,7 +6,7 @@
 #include <time.h>
 
 static void close_to(float actual, float expected) { assert(fabsf(actual - expected) < 0.01f); }
-static ss_pointer_event sample(uint64_t token, int type, float x, float y) { return (ss_pointer_event){token, type, x, y}; }
+static ss_pointer_event sample(uint64_t token, int type, float x, float y) { return (ss_pointer_event){token, type, x, y, 0}; }
 
 int main(void) {
     float x = -1, y = -1;

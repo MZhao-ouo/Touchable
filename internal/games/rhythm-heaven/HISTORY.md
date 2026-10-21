@@ -11,6 +11,29 @@ Build 17 added iPad device checks. The results are in the records below.
 Build 29 is installed on the iPhone, but it has no device game test. Its results come from the Mac host, unit tests, and the iOS Simulator.
 The user ran build 30 on the iPhone. Builds 31–34 have no device tests. Their results come from the Mac host, unit tests, and offline renders.
 
+## Touch inertia (build 40)
+
+The user asked for glide after a fast touch drag.
+The change adds inertia to the menu lists and the level map.
+
+Each pointer event has a monotonic time.
+The code fits a velocity to the last 100 ms of movement before release.
+A list glides when the vertical release speed is at least 700 game pixels per second.
+The list decay is 0.35 s.
+The map uses the horizontal speed and a 0.30 s decay.
+The map stops at its left or right edge.
+The list stops on a row.
+A new touch, a cancel, a token change, or a mode change stops the glide.
+
+The change is in `runtime/rh_menu.c`, `runtime/rh_menu_logic.c`, and `internal/runtime/common/ss_pointer.c`.
+
+Check results:
+
+- `test_menu.c` passes. It checks the velocity fit, a hold before release, the 100 ms window, the decay, and the distance integral.
+- `test_pointer.c` passes.
+- The Mac host scripted input did not reach the start menu in the original build 40 check. Thus no glide result exists.
+- No device test ran on this branch. The branch is ported onto the current `main` tree.
+
 ## System glass press effect (build 34)
 
 In a Silksong session, the user asked for the glass button light effect to match the official Apple buttons.
