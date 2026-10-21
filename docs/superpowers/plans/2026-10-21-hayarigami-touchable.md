@@ -36,13 +36,13 @@
 **Consumes:** The approved design and original NSP/NSO input.
 **Produces:** `load_game('hayarigami')` with verified title and module identity.
 
-- [ ] Run reviewed bootstrap. Verify dependency revisions and applied patches.
-- [ ] Run the original registry and Python baseline. Preserve the output.
-- [ ] Add registry tests for unique app/save IDs, matching module lists, pinned module identities and an initial non-playable status. Watch the missing-game test fail.
-- [ ] Use `games.py new` to register the title. Fill the profile from newly checked original modules.
-- [ ] Place local input links under ignored `MyGameFiles`; stage extraction in a new local path.
-- [ ] Run `analyze_game.py --game hayarigami`. Verify all segment hashes and title evidence.
-- [ ] Run registry and Python tests. Commit the verified configuration and tests.
+- [x] Run reviewed bootstrap. Verify dependency revisions and applied patches.
+- [x] Run the original registry and Python baseline. Preserve the output.
+- [x] Add registry tests for unique app/save IDs, matching module lists, pinned module identities and an initial non-playable status. Watch the missing-game test fail.
+- [x] Use `games.py new` to register the title. Fill the profile from newly checked original modules.
+- [x] Place local input links under ignored `MyGameFiles`; stage extraction in a new local path.
+- [x] Run `analyze_game.py --game hayarigami`. Verify all segment hashes and title evidence.
+- [x] Run registry and Python tests. Commit the verified configuration and tests.
 
 ## Task 2: CPU rewrite and first real startup
 

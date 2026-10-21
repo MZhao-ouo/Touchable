@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "id": "hayarigami",
+  "display_name": "流行之神",
+  "product_name": "Hayarigami",
+  "bundle_id": "com.guiyu.TouchableHayarigami",
+  "build_version": 1,
+  "title_id": "010095b01af94000",
+  "profile": "profile.json",
+  "status": "not-adapted",
+  "save_namespace": "hayarigami",
+  "module_names": [
+    "main",
+    "subsdk0",
+    "sdk"
+  ],
+  "runtime_sources": [],
+  "common_runtime_sources": [],
+  "ios_sources": [],
+  "compile_defines": [],
+  "adapters": {},
+  "ios": {
+    "deployment_target": "26.0"
+  },
+  "host": {
+    "deployment_target": "26.0"
+  },
+  "save_directory": "Hayarigami"
+}

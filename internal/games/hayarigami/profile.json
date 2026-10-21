@@ -1,0 +1,30 @@
+{
+  "title_id": "010095b01af94000",
+  "package_version": 0,
+  "sdk_version": "14.3.0",
+  "upstream_revision": "2eb5758771f110cd53082b999d88d242766610da",
+  "runtime_modules": [
+    "main",
+    "subsdk0",
+    "sdk"
+  ],
+  "modules": {
+    "main": {
+      "sha256": "2b6f3473c1b4f7fdfa68cbad2262ac14fcec6731911e1f80ba3345199fe6118b",
+      "build_id": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "subsdk0": {
+      "sha256": "ad5b29eeefdf4ab0c5be9044eaa4f9c186a95cc52b108401decbc4957ce745bf",
+      "build_id": "c781dd63daf0ddcdb9975da50a198f932a485719000000000000000000000000"
+    },
+    "sdk": {
+      "sha256": "6022d3c89f56ada7c579601d5a23b5da9169c5d965bc78b2ed465b9e1f96cd8a",
+      "build_id": "2aef2cffb104ee7c9e212fd2f4c731e9d1e5f2c4000000000000000000000000"
+    },
+    "rtld": {
+      "sha256": "a3b723feeb3766bb09f7402c9f7d408dc08def4ffc9d3f3dfef0278261317711",
+      "build_id": "8e405c8a464734d8f71c2c1be2dac518010e86fb000000000000000000000000"
+    }
+  },
+  "status": "Input file identities are pinned. Segment integrity, runtime and game tests are pending."
+}
