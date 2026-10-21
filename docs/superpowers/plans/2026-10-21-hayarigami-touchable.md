@@ -52,10 +52,10 @@
 
 - [ ] Test that the title adapter uses the three intended modules and rejects a different module identity before any fixed-address change.
 - [ ] Implement `touchable_game_install(void)` and `touchable_game_host_call(int, uint64_t *)`. Start without speculative fixed-address patches.
-- [ ] Configure shared sources from the existing native-game path. Use the shared Switch touch layout.
-- [ ] Set `in-progress` with explicit runtime, iOS, rewrite and shader adapter fields. Do not claim shader support that is not implemented.
-- [ ] Run `rewrite_game.py --game hayarigami` into a new output directory. Read structure and equivalence logs.
-- [ ] Build the Mac host. Run it with a separate empty save directory and a bounded timeout.
+- [x] Configure shared sources from the existing native-game path. Use the shared Switch touch layout.
+- [x] Set `in-progress` with explicit runtime, iOS, rewrite and shader adapter fields. Do not claim shader support that is not implemented.
+- [x] Run `rewrite_game.py --game hayarigami` into a new output directory. Read structure and equivalence logs.
+- [x] Build the Mac host. Run it with a separate empty save directory and a bounded timeout.
 - [ ] Record the exact first unsupported operation. Reproduce it with a test before each runtime change.
 - [ ] Commit verified source and evidence summaries. Keep raw logs local.
 
@@ -65,10 +65,10 @@
 **Consumes:** Original module images and Task 2 observed graphics calls.
 **Produces:** Touchable shader captures, chain and actual Metal frame evidence.
 
-- [ ] Add synthetic parser tests for bounds, control/code lengths, stage mismatch and duplicate keys. Watch the new extraction path fail.
-- [ ] Add `hayarigami-nvn` extraction using verified embedded stage records. Keep generic dispatch small.
-- [ ] Use the existing `nvn` translator where inputs match. Add tests before any translator change.
-- [ ] Extract and build Mac/iOS libraries. Keep unsupported stages explicit.
+- [x] Add synthetic parser tests for bounds, control/code lengths, stage mismatch and duplicate keys. Watch the new extraction path fail.
+- [x] Add `hayarigami-nvn` extraction using verified embedded stage records. Keep generic dispatch small.
+- [x] Use the existing `nvn` translator where inputs match. Add tests before any translator change.
+- [x] Extract and build Mac/iOS libraries. Keep unsupported stages explicit.
 - [ ] Check the actual first draw and screenshot. Correct binding/origin only with ABI or pixel evidence.
 - [ ] Test both existing games after any shared graphics change. Record unavailable assets.
 
@@ -90,8 +90,8 @@
 **Consumes:** Verified host adapter, shaders and local signing identity.
 **Produces:** A signed IPA whose exact build has passed iPhone checks.
 
-- [ ] Generate the Xcode project with `prepare_ios.py --game hayarigami`.
-- [ ] Build and sign with the authorized identity. Verify independent bundle and save paths.
+- [x] Generate the Xcode project with `prepare_ios.py --game hayarigami`.
+- [x] Build and sign with the authorized identity. Verify independent bundle and save paths.
 - [ ] Install the exact build. Verify installed version and boot log.
 - [ ] Test story entry, repeated virtual buttons, movie exit, audio and foreground recovery.
 - [ ] Measure continuous frame timing without debugger pauses.

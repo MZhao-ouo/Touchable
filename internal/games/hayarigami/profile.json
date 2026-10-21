@@ -26,5 +26,13 @@
       "build_id": "8e405c8a464734d8f71c2c1be2dac518010e86fb000000000000000000000000"
     }
   },
-  "status": "Input file identities are pinned. Segment integrity, runtime and game tests are pending."
+  "status": "Original file and segment hashes are verified. Native rewrite and Mac/iOS shader builds pass. Runtime and iPhone gameplay checks are pending.",
+  "shader_exefs": "main",
+  "nvn_bindings": {
+    "texture": [
+      "0x20",
+      "0x120"
+    ]
+  },
+  "nvn_window_origin": "upper-left"
 }

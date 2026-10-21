@@ -17,6 +17,14 @@ class HayarigamiTests(unittest.TestCase):
         self.assertNotEqual(game.bundle_id, 'com.guiyu.hayarigami')
         validate_registry(game.root)
 
+    def test_uses_touchable_runtime_and_shared_shell(self):
+        game = load_game('hayarigami')
+        self.assertEqual(game.data['adapters'].get('runtime'), 'hayarigami')
+        self.assertEqual(game.data['adapters'].get('rewrite'), 'switch-native')
+        self.assertEqual(game.data['ios'].get('touch_layout'), 'switch')
+        self.assertIn('platform/ios/App.m', game.data.get('common_ios_sources', []))
+        self.assertTrue(game.runtime_sources[0].is_file())
+
     def test_native_module_profile_is_pinned(self):
         game = load_game('hayarigami')
         self.assertEqual(game.module_names, ('main', 'subsdk0', 'sdk'))

@@ -1,6 +1,6 @@
 # Hayarigami 1, 2 and 3
 
-Status: not-adapted. This record does not establish host or iPhone playability.
+Status: in-progress. Development builds are enabled. This record does not establish iPhone playability.
 
 ## Input
 
@@ -52,3 +52,28 @@ Build, sign, install and test the independent iPhone app.
 Export an IPA only with its actual validation scope recorded.
 
 See [the approved design](../../../docs/superpowers/specs/2026-10-21-hayarigami-touchable-design.md).
+
+## Native rewrite, shaders and iOS build
+
+Touchable generated new rewrites of main, subsdk0 and sdk.
+All structure and instruction-equivalence checks passed, with 100 mutations per module.
+The new embedded shader extractor validates 128 records in main.
+It builds 127 vertex/fragment records and reports one unsupported geometry record.
+A request to use that unsupported stage is not supported.
+Mac and iOS libraries were built through Touchable, with chain `2a45343d04c6`.
+The shared runtime and the new title adapter compiled into the Mac host.
+
+The first real Mac launch exited with -6 in dyld.
+The machine runs macOS 15.7.5. The backend requires macOS 26 Metal 4 classes.
+The log names missing `MTL4ArgumentTableDescriptor`. No guest code ran.
+The host result does not test game startup or graphics.
+
+The generated iOS 26 app passed unsigned compilation and linking.
+After the user signed in to Xcode, development signing also passed.
+Its Bundle ID is `com.guiyu.TouchableHayarigami`, build 1.
+Deep and strict signature verification passed. The profile expires on 2026-10-28 at 10:07:08 UTC.
+Device installation and execution checks are in progress.
+
+Code review found an interrupted shader extraction could leave a completed control marker without code.
+The extractor now writes code first. An interrupted-write/retry regression failed before the fix and passes after it.
+All 58 Python tests pass.
