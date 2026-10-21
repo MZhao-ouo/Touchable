@@ -89,7 +89,20 @@ A synthetic regression checks six distinct PCM channels through disabled and ena
 It fails at effect allocation before the fix and passes after it.
 Existing stereo tests, ASan/UBSan, TSan and all 58 Python tests pass.
 This test does not establish exact console wet-reverb behavior or audible phone output.
-Build 2 signed successfully. Installation and further runtime checks are pending.
+Build 2 signed and installed successfully. It passed the reverb allocation point.
+It then crashed in SDK `AddDelay`, at `EffectManager::IsInitialized`.
+The native SDK cannot use the host AudioRenderer configuration as its own manager.
 
 The clone has no Silksong or Rhythm Heaven packages. Their actual host regressions could not run.
 This Mac also cannot run their Metal 4 backend. No gameplay regression pass is claimed for either game.
+
+## Delay support
+
+The shared renderer now handles the imported delay allocation, routing, time, gain, enable and removal calls.
+The delay supports up to six channels and the observed eight-second maximum buffer.
+Synthetic PCM tests check delay time, feedback, six-channel routing, removal and slot reuse.
+Review found that slot reuse could change effect execution order. A failing chain regression reproduced it.
+The renderer now preserves allocation order separately from storage slots. The regression passes.
+ASan/UBSan and TSan checks pass. Existing mixer tests and all 58 Python tests pass.
+The low-pass and wet signal are approximations. Console-identical defaults and phone audio remain unverified.
+Build 3 is the next device candidate. No title screen or playable scene has been verified in this framework.

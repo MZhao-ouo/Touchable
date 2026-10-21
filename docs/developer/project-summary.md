@@ -56,7 +56,9 @@ All 12 NSO segment hashes and new CPU rewrite checks passed.
 The shader extractor reports 127 supported vertex/fragment records and one unsupported geometry record.
 New Mac/iOS Metal libraries and the iOS 26 app were built. Build 1 passed strict/deep signature verification.
 A real Mac launch stopped in dyld because this machine runs macOS 15.7.5 and the backend requires macOS 26 Metal 4.
-No guest execution or host gameplay result is claimed. iPhone installation and gameplay checks are pending.
+No Mac guest execution or host gameplay result is claimed.
+The independent iPhone app installed and reached `nnMain`. Build 2 stopped in SDK `AddDelay`.
+Shared six-channel reverb and delay changes have synthetic coverage. Gameplay checks are pending.
 See [the game record](../../internal/games/hayarigami/README.md) for current evidence and limits.
 
 ### Silksong record

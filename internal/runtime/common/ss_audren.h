@@ -31,6 +31,7 @@ _Static_assert(sizeof(ss_ar_i3dl2) == 0x30, "I3dl2ReverbParameterSet ABI");
 typedef struct ss_ar_mix ss_ar_mix;
 typedef struct ss_ar_voice ss_ar_voice;
 typedef struct ss_ar_reverb ss_ar_reverb;
+typedef struct ss_ar_delay ss_ar_delay;
 typedef struct ss_ar_renderer ss_ar_renderer;
 
 ss_ar_renderer *ss_ar_create(int rate, int frame, int voices, int submixes, int mix_buffers, int effects);
@@ -57,6 +58,16 @@ ss_ar_reverb *ss_ar_add_reverb(ss_ar_renderer *renderer, ss_ar_mix *mix, int cha
 void ss_ar_reverb_io(ss_ar_reverb *reverb, const int8_t *input, const int8_t *output, int count);
 void ss_ar_reverb_enable(ss_ar_reverb *reverb, int enabled);
 void ss_ar_reverb_params(ss_ar_reverb *reverb, const ss_ar_i3dl2 *params);
+
+enum { SS_AR_DELAY_INPUT, SS_AR_DELAY_DRY, SS_AR_DELAY_FEEDBACK, SS_AR_DELAY_LOWPASS };
+ss_ar_delay *ss_ar_add_delay(ss_ar_renderer *renderer, ss_ar_mix *mix, int channels, int64_t maximum_ns);
+void ss_ar_delay_io(ss_ar_delay *delay, const int8_t *input, const int8_t *output, int count);
+void ss_ar_delay_enable(ss_ar_delay *delay, int enabled);
+void ss_ar_delay_set_time(ss_ar_delay *delay, int64_t ns);
+int64_t ss_ar_delay_time(ss_ar_delay *delay);
+void ss_ar_delay_gain(ss_ar_delay *delay, int kind, float gain);
+int ss_ar_delay_removable(ss_ar_delay *delay);
+void ss_ar_remove_delay(ss_ar_delay *delay);
 
 int ss_ar_add_sink(ss_ar_renderer *renderer, ss_ar_mix *mix, const int8_t *input, int count);
 void ss_ar_master_volume(ss_ar_renderer *renderer, float volume);
