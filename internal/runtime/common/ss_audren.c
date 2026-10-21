@@ -228,7 +228,7 @@ int64_t ss_ar_played(const ss_ar_voice *voice) {
 }
 
 ss_ar_reverb *ss_ar_add_reverb(ss_ar_renderer *renderer, ss_ar_mix *mix, int channels) {
-    if (!mix || channels < 1 || channels > 2) return NULL;
+    if (!mix || channels < 1 || channels > SS_AR_CHANNELS) return NULL;
     pthread_mutex_lock(&renderer->client_lock);
     ss_ar_reverb *reverb = NULL;
     for (int i = 0; i < renderer->effect_count; ++i)

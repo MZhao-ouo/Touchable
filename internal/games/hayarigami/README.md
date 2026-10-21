@@ -77,3 +77,19 @@ Device installation and execution checks are in progress.
 Code review found an interrupted shader extraction could leave a completed control marker without code.
 The extractor now writes code first. An interrupted-write/retry regression failed before the fix and passes after it.
 All 58 Python tests pass.
+
+## First iPhone startup and six-channel reverb
+
+Build 1 installed on the iPhone with its independent Bundle ID.
+The actual log shows relocation, SDK initialization, constructors and `BOOT nnMain`.
+It opened AudioRenderer at 48 kHz, then aborted at `Cannot add an I3DL2 reverb with 6 channels`.
+The mixer already has six-channel routing buffers. Its effect-allocation guard still limited reverb to two channels.
+The guard now uses `SS_AR_CHANNELS` as its limit. The existing approximate reverb algorithm is unchanged.
+A synthetic regression checks six distinct PCM channels through disabled and enabled dry reverb routing to stereo.
+It fails at effect allocation before the fix and passes after it.
+Existing stereo tests, ASan/UBSan, TSan and all 58 Python tests pass.
+This test does not establish exact console wet-reverb behavior or audible phone output.
+Build 2 signed successfully. Installation and further runtime checks are pending.
+
+The clone has no Silksong or Rhythm Heaven packages. Their actual host regressions could not run.
+This Mac also cannot run their Metal 4 backend. No gameplay regression pass is claimed for either game.

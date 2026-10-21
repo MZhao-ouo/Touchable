@@ -114,10 +114,50 @@ static void test_reverb_dry_path(void) {
     }
 }
 
+static void test_six_channel_reverb_routing(void) {
+    for (int enabled = 0; enabled < 2; ++enabled) {
+        ss_ar_renderer *r = ss_ar_create(48000, FRAME, 1, 1, 14, 1);
+        assert(r);
+        ss_ar_mix *final = ss_ar_acquire_final(r, 2), *sub = ss_ar_acquire_sub(r, 12);
+        assert(final && sub);
+        const int8_t sink[2] = {0, 1};
+        assert(ss_ar_add_sink(r, final, sink, 2));
+        ss_ar_mix_destination(sub, final);
+        assert(!ss_ar_add_reverb(r, sub, 0));
+        assert(!ss_ar_add_reverb(r, sub, 7));
+        ss_ar_reverb *reverb = ss_ar_add_reverb(r, sub, 6);
+        assert(reverb);
+        const int8_t input[6] = {0, 1, 2, 3, 4, 5}, output[6] = {6, 7, 8, 9, 10, 11};
+        ss_ar_reverb_io(reverb, input, output, 6);
+        ss_ar_reverb_enable(reverb, enabled);
+        ss_ar_i3dl2 parameters = {-10000, -10000, 1.5f, 0.5f, -10000, 0.01f, -10000, 0.02f, 100, 100, 5000, 1};
+        ss_ar_reverb_params(reverb, &parameters);
+        ss_ar_voice *voice = ss_ar_acquire_voice(r, 48000, 6, SS_AR_FORMAT_PCM16);
+        assert(voice);
+        ss_ar_voice_destination(voice, sub);
+        for (int channel = 0; channel < 6; ++channel) {
+            ss_ar_voice_volume(voice, sub, 1, channel, channel);
+            ss_ar_mix_volume(sub, final, 1, channel+6, channel & 1);
+        }
+        int16_t samples[FRAME * 6];
+        for (int i = 0; i < FRAME; ++i)
+            for (int channel = 0; channel < 6; ++channel) samples[i*6+channel] = (channel+1)*100;
+        ss_ar_wavebuffer buffer = {samples, sizeof samples, 0, FRAME, 0, 0};
+        assert(ss_ar_append(voice, &buffer));
+        ss_ar_voice_state(voice, SS_AR_STARTED);
+        ss_ar_update(r);
+        int16_t result[FRAME * 2];
+        ss_ar_render(r, result);
+        for (int i = 2; i < FRAME; ++i) { assert(result[2*i] == 900); assert(result[2*i+1] == 1200); }
+        ss_ar_destroy(r);
+    }
+}
+
 int main(void) {
     test_passthrough_and_counts();
     test_loop_and_pitch();
     test_reverb_dry_path();
+    test_six_channel_reverb_routing();
     puts("test_audren: ok");
     return 0;
 }
