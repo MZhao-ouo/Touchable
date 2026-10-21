@@ -5,6 +5,8 @@ import plistlib
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
+import shutil
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
 from prepare_ios import (shell_controller_haptics, shell_localizations,
@@ -13,6 +15,24 @@ from workspace import ROOT, WorkspaceError
 
 
 class GeneratedResourceTests(unittest.TestCase):
+    def test_shader_staging_does_not_require_source_file_attributes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, target = root / 'source', root / 'target'
+            chain = source / 'ios/b-test'
+            chain.mkdir(parents=True)
+            (chain / 'shader.metallib').write_bytes(b'library')
+            (source / 'shader_map.tsv').write_text('map')
+            original = shutil.copystat
+            def copy_attributes(src, dst, **kwargs):
+                if Path(src).is_file():
+                    raise PermissionError('Source compression flags cannot be set')
+                return original(src, dst, **kwargs)
+            with patch('shutil.copystat', side_effect=copy_attributes):
+                stage_shaders(source, target, 'test')
+            self.assertEqual((target / 'ios/b-test/shader.metallib').read_bytes(), b'library')
+            self.assertEqual((target / 'shader_map.tsv').read_text(), 'map')
+
     def test_rhythm_heaven_declares_its_supported_languages(self):
         data = json.loads((ROOT / 'games/rhythm-heaven/game.json').read_text())
         self.assertEqual(shell_localizations(data['ios']), [

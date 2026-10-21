@@ -106,3 +106,5 @@ The renderer now preserves allocation order separately from storage slots. The r
 ASan/UBSan and TSan checks pass. Existing mixer tests and all 58 Python tests pass.
 The low-pass and wet signal are approximations. Console-identical defaults and phone audio remain unverified.
 Build 3 is the next device candidate. No title screen or playable scene has been verified in this framework.
+
+Shader staging no longer copies source file attributes. This avoids failure when iCloud compression flags cannot be set on generated files. A synthetic attribute-copy failure test fails before the change and passes after it. All 59 Python tests pass. All 381 iOS shader files were read locally before rebuilding.

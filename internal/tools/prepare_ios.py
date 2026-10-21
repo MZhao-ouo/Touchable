@@ -89,8 +89,8 @@ def stage_shaders(shader_root, shaders, chain):
         if stale.name != 'b-' + chain:
             if stale.is_symlink() or not stale.is_dir(): stale.unlink()
             else: shutil.rmtree(stale)
-    shutil.copy2(shader_root / 'shader_map.tsv', shaders / 'shader_map.tsv')
-    shutil.copytree(source, shaders / 'ios' / f'b-{chain}', dirs_exist_ok=True)
+    shutil.copyfile(shader_root / 'shader_map.tsv', shaders / 'shader_map.tsv')
+    shutil.copytree(source, shaders / 'ios' / f'b-{chain}', dirs_exist_ok=True, copy_function=shutil.copyfile)
 
 
 def main():
