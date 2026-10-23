@@ -1,10 +1,33 @@
 #include "rh_menu_logic.h"
 #include <assert.h>
+#include <limits.h>
 #include <math.h>
 #include <stdio.h>
 
 int main(void) {
     rh_map_tap state = {0};
+    assert(rh_map_input_ready(&state, 1));
+    assert(!rh_map_tap_activate(&state, 1, 7, 1));
+    assert(rh_map_input_ready(&state, 1));
+    assert(rh_map_tap_activate(&state, 1, 7, 1));
+    state = (rh_map_tap){17, 9, 1};
+    assert(rh_map_input_ready(&state, 1));
+    assert(state.token == 17 && state.item == 9 && state.armed);
+    const int blocked_states[] = {0, 2, -1, 3, 99, INT_MIN, INT_MAX};
+    for (unsigned index = 0; index < sizeof blocked_states / sizeof blocked_states[0]; ++index) {
+        state = (rh_map_tap){1, 7, 1};
+        assert(!rh_map_input_ready(&state, blocked_states[index]));
+        assert(!state.armed && !state.token && !state.item);
+        assert(rh_map_input_ready(&state, 1));
+        assert(!rh_map_tap_activate(&state, 1, 7, 1));
+        assert(rh_map_tap_activate(&state, 1, 7, 1));
+    }
+    state = (rh_map_tap){17, 9, 1};
+    assert(!rh_map_input_ready(&state, 0));
+    assert(!rh_map_input_ready(&state, 0));
+    assert(!rh_map_input_ready(&state, 2));
+    assert(!state.token && !state.item && !state.armed);
+    state = (rh_map_tap){0};
     /* An already selected level still needs the first touch to arm entry. */
     assert(!rh_map_tap_activate(&state, 1, 7, 1));
     assert(rh_map_tap_activate(&state, 1, 7, 1));

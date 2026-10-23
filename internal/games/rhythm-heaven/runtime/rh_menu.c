@@ -380,10 +380,17 @@ static void map_pan(void *scene, float dx) {
     ((void (*)(void *, float, float))(base + 0x4fe260))((uint8_t *)stage + 8, x, real(stage, 0x1c));
 }
 static void map_input(void *scene) {
-    if (integer(scene, 0x5288) == 2) {
-        void *selector = ptr(scene, 0x6d68);
-        if (selector) selector_input(selector, ptr(selector, 0x18), scene);
-        map_tap.armed = 0;
+    int input_state = integer(scene, 0x5288);
+    if (!rh_map_input_ready(&map_tap, input_state)) {
+        void *selector = input_state == 2 ? ptr(scene, 0x6d68) : NULL;
+        if (!selector || !selector_input(selector, ptr(selector, 0x18), scene)) {
+            ss_pointer_frame blocked = {.owner = (uintptr_t)scene, .mode = SS_POINTER_MENU};
+            blocked.token = ss_pointer_publish(&blocked);
+            gesture = (ss_pointer_gesture){0};
+            can_drag = 0;
+            ss_pointer_event ignored;
+            while (ss_pointer_take(blocked.token, &ignored)) {}
+        }
         ((void (*)(void *))(base + 0x1d1410))(scene);
         return;
     }
