@@ -1,5 +1,28 @@
 # Rhythm Heaven
 
+## 2026-10-24: Map input guard during unlock transitions
+
+The map touch adapter now accepts map selection and dragging only in input state 1.
+State 2 keeps the native selector path.
+Other states clear the armed tap.
+If no selector can accept input, the adapter publishes an empty menu frame, resets the gesture, and discards queued pointer events.
+The native map function still runs.
+This prevents transition touches from changing the unlock target or starting a level.
+
+Earlier controlled ARM64 emulation reproduced a wrong unlock target after map selection changed during an unlock transition.
+The same input guard prevented that case.
+This is emulation evidence. It does not prove the exact touch sequence on an iPhone.
+The change uses the existing v0 module profile.
+It does not repair progression already saved in the wrong state.
+The application identity, save path, and package version are unchanged.
+
+Windows checks on the current public source passed `test_menu`, `test_pointer`, and both game configuration checks.
+The C checks used MinGW GCC with `-Wall -Wextra -Werror`.
+The configuration checks used Python UTF-8 mode.
+The workspace Python suite could not start because the local interpreter lacks `lz4`.
+No Mac host test or new iPhone gameplay test ran for this source change.
+Deliberate touches during a new unlock transition still need iPhone verification.
+
 ## 2026-10-23: Rhythm Toys touch and Drum Lessons controller (build 39)
 
 The user asked for touch in the Rhythm Toys and for a virtual controller in Drum Lessons.
