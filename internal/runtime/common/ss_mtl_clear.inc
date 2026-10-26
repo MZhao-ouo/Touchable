@@ -77,10 +77,10 @@ static void ss_clear_attachment(const p_clear_color *color, const p_clear_ds *de
     MTL4RenderPassDescriptor *pass = [MTL4RenderPassDescriptor new];
     MTLRenderPassAttachmentDescriptor *attachment = color ? pass.colorAttachments[0] :
         has_depth ? pass.depthAttachment : pass.stencilAttachment;
-    attach(attachment, target, view, has_view);
+    attach(attachment, target, view, has_view, 0);   /* the clear pipeline uses the base format */
     attachment.loadAction = MTLLoadActionLoad; attachment.storeAction = MTLStoreActionStore;
     if (has_depth && has_stencil) {
-        attach(pass.stencilAttachment, target, view, has_view);
+        attach(pass.stencilAttachment, target, view, has_view, 0);
         pass.stencilAttachment.loadAction = MTLLoadActionLoad;
         pass.stencilAttachment.storeAction = MTLStoreActionStore;
     }

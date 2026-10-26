@@ -17,6 +17,9 @@
      when it encodes the submit.
    This adapter skips these waits between Begin and End on the same thread. Present keeps its
    finish, so the CPU stays at most one frame ahead of the GPU.
+   Both copies require the Metal layer to encode each submit inside the submit call. The adapter
+   sets DM_NVN_SYNC=1, so the NVN layer translates on the game thread and not on its translation
+   thread.
 
    RH_BATCH_WAIT=1 keeps all waits. RH_BATCH_TRACE=1 logs the counts every 600 Begin calls. */
 #include "rh_batch.h"
@@ -132,5 +135,7 @@ void rh_batch_install(const module_t *main) {
     }
     queue_finish = nvn_hook("nvnQueueFinish", finish_hook);
     sync_wait = nvn_hook("nvnSyncWait", wait_hook);
-    LOG("Sprite batcher: skip GPU waits between Begin and End (%u method slots)", slots);
+    /* The NVN layer reads this at the first submit. */
+    setenv("DM_NVN_SYNC", "1", 1);
+    LOG("Sprite batcher: skip GPU waits between Begin and End (%u method slots); translate submits on the game thread", slots);
 }

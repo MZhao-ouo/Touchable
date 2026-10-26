@@ -1,5 +1,13 @@
 # Rhythm Heaven
 
+
+## 2026-10-24: Upstream graphics update; translation stays on the game thread (source change, no build)
+
+- The shared Metal layer now includes the newer upstream graphics code. Its separate translation thread broke the sprite batcher adapter: the game rewrote command memory before it was encoded, and the screen stayed black on the Mac host.
+- `runtime/rh_batch.c` sets `DM_NVN_SYNC=1` when it skips the batcher waits, so Rhythm Heaven translates each submit inside the submit call as before. It keeps the other upstream changes (state caching, pool residency on first use).
+- Mac host: the first screens and a 2400x1080 frame with ambient bars are the same as before. No Rhythm Heaven build or device test.
+- See [the upstream graphics merge record](../../../.touchable/work/silksong/reports/upstream-gfx-merge-20261024/README.md).
+
 ## 2026-10-24: Map input guard during unlock transitions
 
 From pull request #9 by SDR (issue #2: a stage was not unlocked and the next remix was unlocked instead). The core guard was applied on top of the select-then-confirm map.

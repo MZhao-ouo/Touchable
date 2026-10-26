@@ -97,7 +97,7 @@ Known limits include unconfirmed score-digit behavior after the block-height fix
 
 The game hooks are defined in [touchable_game.h](../../internal/runtime/common/touchable_game.h). Shared sources still use `ss_` names. The name alone does not make a source file specific to Silksong.
 
-The main upstream revision is `2eb5758771f110cd53082b999d88d242766610da`. [bootstrap.sh](../../internal/tools/bootstrap.sh) checks this revision and applies [d2r-mobile.patch](../../internal/patches/d2r-mobile.patch). Changes in the upstream working tree must remain represented in the patch.
+The main upstream revision is `2eb5758771f110cd53082b999d88d242766610da`. [bootstrap.sh](../../internal/tools/bootstrap.sh) checks this revision and applies [d2r-mobile.patch](../../internal/patches/d2r-mobile.patch). Changes in the upstream working tree must remain represented in the patch. On 2026-10-24 the patch took the newer upstream Metal layer from `origin/main` `195ae11`: the `dm/gfx/nvn` and `dm/gfx/tex` runtime files, their tests, and `dm/host/dm.h`, `hle.h`, and `dm_sect.h`. The pin did not change. Silksong uses the upstream translation thread. Rhythm Heaven sets `DM_NVN_SYNC=1` in its sprite batcher adapter and translates on the game thread. See [the merge record](../../.touchable/work/silksong/reports/upstream-gfx-merge-20261024/README.md).
 
 ## Environment and verification limits
 
