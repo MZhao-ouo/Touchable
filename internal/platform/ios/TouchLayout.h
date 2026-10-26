@@ -29,7 +29,7 @@ typedef struct {
 /* A phone keeps the controls near the lower corners. A tablet raises them a little
    toward the resting thumbs and makes them 1.2 times larger. It also puts them near the
    side edges, so they cover less of the game. On an iPad mini the D-pad center is
-   174 points above the lower edge and 119 points from the left edge. A small iPad window uses
+   205 points above the lower edge and 111 points from the left edge. A small iPad window uses
    the phone layout. The shoulder buttons sit above their side, below the game HUD
    in the upper-left corner. ZL and ZR take the outer places, because ZR is the
    default dash and the outer place is nearer the thumb. − and + take the outer upper corners.
@@ -49,8 +49,8 @@ static inline ss_pad_layout ss_pad_layout_make(double width, double height, doub
         right = width - fmax(safe_right, 16);
         bottom = height - fmax(safe_bottom + 18, 36);
     }
-    /* The D-pad is as wide as the face-button diamond. Its center keeps the height of the
-       140-point D-pad in build 17, so the D-pad grows around the resting thumb. */
+    /* The D-pad is as wide as the face-button diamond. Its center has the height of the
+       face-button center, which is set below. */
     double face = 54 * k, small = 46 * k, d = 57 * k, dpad = 2 * d + face;
     double sx = left + dpad / 2 + 2 * k, sy = bottom - 70 * k;
     double fx = right - face / 2 - d - 2 * k, fy = bottom - face / 2 - d;
@@ -89,6 +89,7 @@ static inline ss_pad_layout ss_pad_layout_make(double width, double height, doub
     if (fx + spread > limit) fx = limit - spread;
     double low = height - safe_bottom - trigger / 2 - 2 * k;
     if (fy + d + drop > low) fy = low - d - drop;
+    sy = fy;   /* the D-pad center has the height of the face-button center (2026-10-25) */
     /* R is above A. It rises until it keeps 2 points from X and A. In a short window R would hit + or
        the map button next to +. R then goes above Y. */
     /* The map button (L) is a diamond like R. Next to + it is at map_x. */

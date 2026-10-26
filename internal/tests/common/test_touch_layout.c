@@ -92,13 +92,13 @@ static void check_device(const device *d) {
     /* The D-pad center ignores a resting thumb but leaves most of the D-pad for directions. */
     assert(p.dpad_center >= 12 && p.dpad_center <= 0.2 * p.dpad.size);
     /* Build 18 makes the D-pad as wide as the face-button diamond after user feedback.
-       The D-pad center keeps the build 17 height: 70 points (84 on a tablet) above the lower margin.
-       Since 2026-10-23 the diamond is higher, and ZL and ZR are below it, so B is above that height.
+       Since 2026-10-25 the D-pad center has the height of the face-button center (between Y and A).
+       ZL and ZR are below the diamond, so B is above the lower margin.
        The D-pad stays below the row of - and +. */
     ss_pad_circle a = p.buttons[SS_PAD_A], y = p.buttons[SS_PAD_Y], b = p.buttons[SS_PAD_B];
     assert(fabs(p.dpad.size - (a.x - y.x + a.size)) < 1e-9);
     double lower = p.tablet ? d->height - fmax(d->bottom + 70, 90) : d->height - fmax(d->bottom + 18, 36);
-    assert(fabs(lower - 70 * (p.tablet ? 1.2 : 1) - p.dpad.y) < 1e-9);
+    assert(fabs(p.dpad.y - a.y) < 1e-9 && fabs(p.dpad.y - y.y) < 1e-9);
     assert(b.y + b.size / 2 < lower);
     assert(p.dpad.y - p.dpad.size / 2 - p.dpad_margin > minus.y + minus.size / 2 + p.hit_margin);
     if (p.tablet) {
@@ -106,7 +106,8 @@ static void check_device(const device *d) {
            Build 12 put the stick center 254 points up on an iPad mini. That was too high.
            The D-pad takes the place of the stick. */
         assert(p.dpad.size > 200 && p.buttons[SS_PAD_A].size > 60);
-        assert(d->height - p.dpad.y >= 150 && d->height - p.dpad.y <= 200);
+        /* Since 2026-10-25 the D-pad has the height of the face buttons: 205 points up on an iPad mini. */
+        assert(d->height - p.dpad.y >= 150 && d->height - p.dpad.y <= 215);
         assert(d->height - d->bottom - (p.buttons[SS_PAD_B].y + p.buttons[SS_PAD_B].size / 2) >= 60);
         assert(p.dpad.x <= 160 && d->width - p.buttons[SS_PAD_B].x <= 180);
         /* Build 16 put the D-pad and A 42 points from the side edges. They covered too much of the game. */
@@ -122,7 +123,7 @@ static void check_device(const device *d) {
         assert(minus.size >= 28 && p.pad_toggle.size >= 28);
     } else {
         assert(p.dpad.size == 168 && p.buttons[SS_PAD_A].size == 54);
-        assert(d->height - d->bottom - (p.dpad.y + p.dpad.size / 2) <= 36);
+        assert(d->height - d->bottom - (p.dpad.y + p.dpad.size / 2) <= 50);
     }
     printf("%-24s %s: D-pad (%.0f, %.0f) %.0f, A (%.0f, %.0f) %.0f, ZR (%.0f, %.0f), ZL (%.0f, %.0f), - (%.0f, %.0f), + (%.0f, %.0f), toggle (%.0f, %.0f)\n",
            d->name, p.tablet ? "tablet" : "phone", p.dpad.x, p.dpad.y, p.dpad.size,
