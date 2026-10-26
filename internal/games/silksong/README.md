@@ -4,6 +4,42 @@
 
 
 
+
+## 2026-10-26: Enemy health bars (build 36, installed on the iPhone, no device test yet)
+
+User request: "build the health bars first" (GitHub issue #10).
+
+- `runtime/ss_enemy_bars.c` hooks `HealthManager.Update` and publishes a bar for each hit enemy (remaining hp / initHp) at the top of its collider. `App.m` draws the bars above the game picture.
+- Settings app → Silksong → Gameplay → Enemy health bars (off by default). Takes effect at the next start.
+- Mac host: the projection matches Hornet's position in screenshots; no fight was tested. Build 36: `IPA/silksong/Silksong-build36-20261026-012358-d465d9.ipa`.
+- See [the health bar record](../../../.touchable/work/silksong/reports/health-bars-20261026/README.md).
+
+## 2026-10-25: Render resolution and refresh rate on the app page in the Settings app (build 35)
+
+User request: "Add a option in settings to let player choose render resolution and refresh rate."
+
+- `game.json` `ios.player_settings` lists the choices: render height 720, 900, 1080 or 1440 lines, and 60 or 120 Hz. "Default" keeps the profile values (1080 lines, 120 Hz).
+- `internal/tools/prepare_ios.py` writes `Settings.bundle` (English and Simplified Chinese) and `TouchablePlayerSettings` in Info.plist. `App.m` reads the choices at launch and logs a `Player settings:` line. A change takes effect at the next game start.
+- The picture is at most 1920 pixels wide, so an iPhone (2.17:1) uses at most 882 lines; 1080 and 1440 give the same result there. An iPad mini uses up to 1280 lines.
+- Build 35 (`IPA/silksong/Silksong-build35-20261025-171151-96fbc1.ipa`) is installed on the iPhone. iPhone test: 900p at 60 Hz dropped 0.2 % of frames (steady 60 fps); 720p at 120 Hz dropped 14.9 % (default 882 lines at 120 Hz in build 34: 27.1 %), GPU p50 6.3 ms. It contains the page; it also has the D-pad height change and the upstream graphics merge. Python tests: 59 passed.
+
+## 2026-10-25: D-pad at the height of the face buttons (source change, no build)
+
+User request: "Align D-PAD and ABXY, make sure they are on same height".
+
+- `internal/platform/ios/TouchLayout.h`: the D-pad center now has the height of the face-button center (Y and A). Before, it kept the build 17 height, 26 points lower on a phone. iPhone 16 Pro Max: D-pad and A at y 305. iPad mini: 205 points above the lower edge (174 before).
+- `internal/tests/common/test_touch_layout.c`: checks the equal height; PASS on 11 screen sizes.
+
+## 2026-10-24: Upstream graphics translation thread and renderer optimizations (build 34)
+
+User request: "Inspect upstream repo find if there are good performance optimization which can be used in Touchable project. Use them and optimize our project's performance."
+
+- The shared Metal layer now includes the newer upstream graphics code (to upstream `195ae11`): command replay and Metal encoding run on a separate real-time thread (`nvn-translate`), unchanged render state is not sent again, memory pools become resident only on first GPU use, and fewer autorelease operations occur for each draw.
+- The texture object still fits Silksong's 128 bytes: `magic` is 8 bits and the pool offset 32 bits in the Touchable build.
+- Mac host: menus and gameplay render the same as before; the present thread uses 0.23 ms of CPU for each frame, and translation (0.35 ms) runs on the new thread. On the iPhone, build 32 spent 1.4 to 1.9 ms of each frame on translation on the game thread.
+- Build 34 IPA: `IPA/silksong/Silksong-build34-20261024-174420-de2b5f.ipa`. Installed on the iPhone. iPhone test (different areas from the build 32 log): dropped frames 27.1 % (build 32: 32.6 %), frame time p95 10.9 ms (12.1 ms), p50 9.5 ms (8.9 ms). The game thread is no longer the limit; at 120 Hz the GPU is (GPU p50 about 9 ms against an 8.33 ms budget).
+- See [the upstream graphics merge record](../../../.touchable/work/silksong/reports/upstream-gfx-merge-20261024/README.md).
+
 ## 2026-10-23: Select, then confirm on the save select (build 33)
 
 User request: "There are still a lot of double tap to confirm logic, change all of them to select-then-confirm" (also for Silksong).

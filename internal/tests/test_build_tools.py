@@ -9,7 +9,8 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
 from build_shaders import check_metallib, metallib_target
 from prepare_ios import (localized_names, shell_controller_haptics, shell_display_names, shell_localizations,
-                         shell_tv_mode_audio_route, stage_display_names, stage_module_tables, stage_shaders)
+                         shell_player_settings, shell_tv_mode_audio_route, stage_display_names, stage_module_tables,
+                         stage_settings_bundle, stage_shaders)
 from workspace import ROOT, WorkspaceError
 
 
@@ -93,6 +94,44 @@ class MetalLibraryTargetTests(unittest.TestCase):
         with self.assertRaises(WorkspaceError):
             shell_tv_mode_audio_route({'tv_mode_audio_route': 'yes'})
 
+
+
+class PlayerSettingsTests(unittest.TestCase):
+    def test_silksong_offers_resolution_and_refresh_rate(self):
+        data = json.loads((ROOT / 'games/silksong/game.json').read_text())
+        profile = json.loads((ROOT / 'games/silksong/profile.json').read_text())
+        settings = shell_player_settings(data['ios'], profile['environment'])
+        self.assertEqual(settings['render_heights'], [720, 900, 1080, 1440])
+        self.assertEqual(settings['display_hz'], [60, 120])
+        self.assertTrue(settings['health_bars'])
+        self.assertEqual((settings['default_height'], settings['default_hz']), (1080, 120))
+        self.assertIsNone(shell_player_settings({}, {}))
+
+    def test_values_outside_the_runtime_range_are_refused(self):
+        for bad in ({'render_heights': [540]}, {'display_hz': [90]}, {'render_heights': [720, 720]},
+                    {'render_heights': ['720']}, {'other': [1]}, {}, {'render_heights': [], 'display_hz': []},
+                    {'health_bars': 'yes'}, {'health_bars': False}):
+            with self.assertRaises(WorkspaceError):
+                shell_player_settings({'player_settings': bad}, {})
+
+    def test_settings_bundle_lists_the_choices(self):
+        settings = shell_player_settings({'player_settings': {'render_heights': [720, 1080], 'display_hz': [60, 120], 'health_bars': True}},
+                                         {'SS_RENDER_HEIGHT': '1080', 'SS_DISPLAY_HZ': '120'})
+        with tempfile.TemporaryDirectory() as temp:
+            out = Path(temp) / 'Settings.bundle'
+            self.assertEqual(stage_settings_bundle(settings, out), out)
+            with (out / 'Root.plist').open('rb') as stream:
+                items = plistlib.load(stream)['PreferenceSpecifiers']
+            choices = {i['Key']: i['Values'] for i in items if i['Type'] == 'PSMultiValueSpecifier'}
+            self.assertEqual(choices, {'TouchableRenderHeight': ['default', '720', '1080'],
+                                       'TouchableDisplayHz': ['default', '60', '120']})
+            toggles = [i for i in items if i['Type'] == 'PSToggleSwitchSpecifier']
+            self.assertEqual([(t['Key'], t['DefaultValue']) for t in toggles], [('TouchableHealthBars', False)])
+            with (out / 'en.lproj' / 'Root.strings').open('rb') as stream:
+                self.assertEqual(plistlib.load(stream)['DefaultRate'], 'Default (120 Hz)')
+            self.assertTrue((out / 'zh-Hans.lproj' / 'Root.strings').is_file())
+            self.assertIsNone(stage_settings_bundle(None, out))
+            self.assertFalse(out.exists())
 
 class DisplayNameTests(unittest.TestCase):
     def test_every_game_has_an_english_default_name(self):

@@ -11,6 +11,7 @@
 #include "ss_haptics.h"
 #include "ss_touch.h"
 #include "ss_pointer.h"
+#include "ss_health_bars.h"
 #include "TouchLayout.h"
 
 int ss_host_run(const char *directory);
@@ -912,6 +913,48 @@ static CGRect gameRect(CGSize size) {
 + (Class)layerClass { return CAMetalLayer.class; }
 @end
 
+/* Enemy health bars from the game adapter (ss_health_bars.h), above the game picture. The game picture fills
+   the view. The layers are kept from frame to frame. */
+@interface HealthBarView : UIView
+- (void)refreshHidden:(BOOL)hidden;
+@end
+@implementation HealthBarView {
+    NSMutableArray<CALayer *> *_backs, *_fills;
+}
+- (void)refreshHidden:(BOOL)hidden {
+    ss_health_bar bars[SS_HEALTH_BARS_MAX];
+    uint64_t age = 0;
+    int count = hidden ? 0 : ss_health_bars_read(bars, SS_HEALTH_BARS_MAX, &age);
+    if (age > 150000000ull) count = 0;   /* no enemy update for 150 ms, for example a room change */
+    if (!count && !_backs.count) return;
+    if (!_backs) { _backs = [NSMutableArray new]; _fills = [NSMutableArray new]; }
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    CGSize size = self.bounds.size;
+    CGFloat top = self.safeAreaInsets.top + 6, height = 5;
+    for (int i = 0; i < count; ++i) {
+        if (i == (int)_backs.count) {
+            CALayer *back = [CALayer layer], *fill = [CALayer layer];
+            back.backgroundColor = [UIColor colorWithWhite:0 alpha:0.6].CGColor;
+            back.borderColor = [UIColor colorWithWhite:1 alpha:0.55].CGColor;
+            back.borderWidth = 0.5; back.cornerRadius = 3;
+            fill.backgroundColor = [UIColor colorWithRed:0.86 green:0.18 blue:0.2 alpha:1].CGColor;
+            fill.cornerRadius = 2;
+            [self.layer addSublayer:back]; [self.layer addSublayer:fill];
+            [_backs addObject:back]; [_fills addObject:fill];
+        }
+        /* The bar is as wide as the enemy, 36 to 160 points, and 8 points above its top. */
+        CGFloat width = fmin(fmax(bars[i].width * size.width, 36), 160);
+        CGFloat x = bars[i].x * size.width - width / 2, y = fmax(bars[i].y * size.height - 8 - height, top);
+        _backs[i].frame = CGRectMake(x - 1, y - 1, width + 2, height + 2);
+        _fills[i].frame = CGRectMake(x, y, width * fmin(fmax(bars[i].fill, 0), 1), height);
+        _backs[i].hidden = _fills[i].hidden = NO;
+    }
+    for (NSUInteger i = count; i < _backs.count; ++i) _backs[i].hidden = _fills[i].hidden = YES;
+    [CATransaction commit];
+}
+@end
+
 static void *runGame(void *unused) {
     @autoreleasepool { pthread_setname_np("Touchable main"); ss_host_run(moduleDirectory.fileSystemRepresentation); }
     return NULL;
@@ -919,6 +962,7 @@ static void *runGame(void *unused) {
 
 @interface GameViewController : UIViewController
 @property(nonatomic, strong) MetalView *metalView;
+@property(nonatomic, strong) HealthBarView *healthBars;   /* only when SS_HEALTH_BARS is set */
 @property(nonatomic, strong) PadDpad *dpad;
 @property(nonatomic, strong) GlassLayer *glassLayer;   /* the Switch-style controls, in one glass container */
 @property(nonatomic, strong) CAShapeLayer *dimming;    /* darkens the game behind the visible controls */
@@ -964,6 +1008,11 @@ static void *runGame(void *unused) {
     self.metalView = [MetalView new];
     self.metalView.userInteractionEnabled = NO;
     [self.view addSubview:self.metalView];
+    if (ss_health_bars_enabled()) {
+        self.healthBars = [HealthBarView new];
+        self.healthBars.userInteractionEnabled = NO;
+        [self.view addSubview:self.healthBars];
+    }
     gameLayer = (CAMetalLayer *)self.metalView.layer;
     gameLayer.device = MTLCreateSystemDefaultDevice();
     gameLayer.pixelFormat = MTLPixelFormatBGRA8Unorm;
@@ -1089,6 +1138,7 @@ static void *runGame(void *unused) {
 - (void)pollInput:(CADisplayLink *)link {
     [self followDisplayRate:link];
     [self.pointerView refresh];
+    [self.healthBars refreshHidden:self.loadingScreen || self.menuFrame || self.cutsceneFrame || self.mapFrame];
     int controls = self.leftZone ? ss_pointer_controls() : SS_CONTROLS_SHOW;
     if (self.leftZone && controls == SS_CONTROLS_KEEP) {
         /* A short gap in the game's frames, for example a fade. Keep the controls as they are. */
@@ -1288,6 +1338,7 @@ static void *runGame(void *unused) {
     ss_display_set_view(size.width, size.height);
     ss_display_size render = ss_display_resolution(720);
     self.metalView.frame = self.view.bounds;
+    self.healthBars.frame = self.view.bounds;
     self.pointerView.frame = self.view.bounds;
     gameLayer.drawableSize = CGSizeMake(render.width, render.height);
     if ([[NSBundle.mainBundle objectForInfoDictionaryKey:@"TouchableNativeDrawable"] boolValue]) {
@@ -1536,6 +1587,22 @@ static void *runGame(void *unused) {
     NSDictionary *environment = [NSBundle.mainBundle objectForInfoDictionaryKey:@"TouchableRuntimeEnvironment"];
     for (NSString *key in environment) {
         setenv(key.UTF8String, [environment[key] UTF8String], 1);
+    }
+    /* Player choices on the app page in the Settings app replace the profile values. Only the values
+       that the game lists in TouchablePlayerSettings are used. "default" keeps the profile value. */
+    NSDictionary *playerSettings = [NSBundle.mainBundle objectForInfoDictionaryKey:@"TouchablePlayerSettings"];
+    if ([playerSettings isKindOfClass:NSDictionary.class]) {
+        NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+        NSString *height = [defaults stringForKey:@"TouchableRenderHeight"], *rate = [defaults stringForKey:@"TouchableDisplayHz"];
+        NSArray *heights = playerSettings[@"RenderHeights"], *rates = playerSettings[@"DisplayHz"];
+        if (height.integerValue && [heights isKindOfClass:NSArray.class] && [heights containsObject:@(height.integerValue)])
+            setenv("SS_RENDER_HEIGHT", height.UTF8String, 1);
+        if (rate.integerValue && [rates isKindOfClass:NSArray.class] && [rates containsObject:@(rate.integerValue)])
+            setenv("SS_DISPLAY_HZ", rate.UTF8String, 1);
+        if ([playerSettings[@"HealthBars"] boolValue] && [defaults boolForKey:@"TouchableHealthBars"]) setenv("SS_HEALTH_BARS", "1", 1);
+        fprintf(stderr, "Player settings: render height %s (SS_RENDER_HEIGHT=%s), refresh rate %s (SS_DISPLAY_HZ=%s), health bars %s\n",
+                (height ?: @"default").UTF8String, getenv("SS_RENDER_HEIGHT") ?: "720",
+                (rate ?: @"default").UTF8String, getenv("SS_DISPLAY_HZ") ?: "60", getenv("SS_HEALTH_BARS") ? "on" : "off");
     }
     /* The game starts at 60 Hz. The input display link raises the rate when the screen runs at 120 Hz. */
     const char *displayHz = getenv("SS_DISPLAY_HZ");

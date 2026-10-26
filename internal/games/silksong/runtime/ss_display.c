@@ -79,5 +79,6 @@ void ss_display_install(void) {
         (double)size.width / size.height, world.width, world.height, ss_display_output_height());
 }
 
-void touchable_game_install(void) { ss_display_install(); ss_touch_ui_install(); }
+void ss_enemy_bars_install(void);
+void touchable_game_install(void) { ss_display_install(); ss_touch_ui_install(); ss_enemy_bars_install(); }
 int touchable_game_host_call(int number, uint64_t *registers) { return ss_display_host_call(number, registers); }

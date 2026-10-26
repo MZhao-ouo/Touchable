@@ -51,6 +51,79 @@ def shell_tv_mode_audio_route(shell):
     return value
 
 
+RENDER_HEIGHTS = range(720, 1441)   # SS_RENDER_HEIGHT range in runtime/common/ss_display.c
+DISPLAY_RATES = (60, 120)            # SS_DISPLAY_HZ values in runtime/common/ss_platform.c
+
+
+def shell_player_settings(shell, environment):
+    """Optional ios.player_settings: {"render_heights": [...], "display_hz": [...], "health_bars": true}. Return None or
+    {"render_heights", "display_hz", "health_bars", "default_height", "default_hz"}. The defaults come from the profile environment."""
+    value = shell.get('player_settings')
+    if value is None:
+        return None
+    if not isinstance(value, dict) or not value or set(value) - {'render_heights', 'display_hz', 'health_bars'}:
+        raise WorkspaceError('ios.player_settings may contain only render_heights, display_hz, and health_bars.')
+    result = {}
+    for key, allowed in (('render_heights', RENDER_HEIGHTS), ('display_hz', DISPLAY_RATES)):
+        items = value.get(key, [])
+        if (not isinstance(items, list) or len(set(items)) != len(items) or
+                not all(isinstance(v, int) and not isinstance(v, bool) and v in allowed for v in items)):
+            raise WorkspaceError(f'ios.player_settings.{key} must be distinct values in the supported range.')
+        result[key] = sorted(items)
+    result['health_bars'] = value.get('health_bars', False)
+    if not isinstance(result['health_bars'], bool):
+        raise WorkspaceError('ios.player_settings.health_bars must be true or false.')
+    if not result['render_heights'] and not result['display_hz'] and not result['health_bars']:
+        raise WorkspaceError('ios.player_settings needs render_heights, display_hz, or health_bars.')
+    result['default_height'] = int(environment.get('SS_RENDER_HEIGHT', 720))
+    result['default_hz'] = 120 if str(environment.get('SS_DISPLAY_HZ', '60')) == '120' else 60
+    return result
+
+
+SETTINGS_TEXT = {
+    'en': {'Graphics': 'Graphics', 'Resolution': 'Render resolution', 'Rate': 'Refresh rate',
+           'Gameplay': 'Gameplay', 'HealthBars': 'Enemy health bars', 'GameplayFooter': 'Shows a bar above each enemy that you hit. Takes effect the next time the game starts.',
+           'Default': 'Default (%s)', 'Footer': 'Changes take effect the next time the game starts. '
+           'A lower resolution or 60 Hz makes the GPU work less, so fewer frames drop and the device stays cooler. '
+           'The picture is at most 1920 pixels wide, so a wide screen can use fewer lines than selected.'},
+    'zh-Hans': {'Graphics': '画面', 'Resolution': '渲染分辨率', 'Rate': '刷新率', 'Default': '默认（%s）',
+                'Gameplay': '游戏', 'HealthBars': '敌人血条', 'GameplayFooter': '在被击中的敌人上方显示血条。下次启动游戏时生效。',
+                'Footer': '下次启动游戏时生效。较低的分辨率或 60 Hz 可以减轻 GPU 负担，掉帧更少，设备也更凉。'
+                '画面宽度最多 1920 像素，宽屏实际行数可能低于所选值。'},
+}
+
+
+def stage_settings_bundle(settings, directory):
+    """Write Settings.bundle for the app page in the iOS Settings app. Return its path, or None."""
+    if directory.exists(): shutil.rmtree(directory)
+    if not settings: return None
+    directory.mkdir(parents=True)
+    items = [{'Type': 'PSGroupSpecifier', 'Title': 'Graphics', 'FooterText': 'Footer'}]
+    if settings['render_heights']:
+        values = ['default'] + [str(v) for v in settings['render_heights']]
+        titles = ['DefaultHeight'] + [f'{v}p' for v in settings['render_heights']]
+        items.append({'Type': 'PSMultiValueSpecifier', 'Key': 'TouchableRenderHeight', 'Title': 'Resolution',
+                      'DefaultValue': 'default', 'Values': values, 'Titles': titles})
+    if settings['display_hz']:
+        values = ['default'] + [str(v) for v in settings['display_hz']]
+        titles = ['DefaultRate'] + [f'{v} Hz' for v in settings['display_hz']]
+        items.append({'Type': 'PSMultiValueSpecifier', 'Key': 'TouchableDisplayHz', 'Title': 'Rate',
+                      'DefaultValue': 'default', 'Values': values, 'Titles': titles})
+    if settings['health_bars']:
+        items.append({'Type': 'PSGroupSpecifier', 'Title': 'Gameplay', 'FooterText': 'GameplayFooter'})
+        items.append({'Type': 'PSToggleSwitchSpecifier', 'Key': 'TouchableHealthBars', 'Title': 'HealthBars', 'DefaultValue': False})
+    with (directory / 'Root.plist').open('wb') as stream:
+        plistlib.dump({'StringsTable': 'Root', 'PreferenceSpecifiers': items}, stream, fmt=plistlib.FMT_XML)
+    for language, text in SETTINGS_TEXT.items():
+        strings = {k: text[k] for k in ('Graphics', 'Resolution', 'Rate', 'Footer', 'Gameplay', 'HealthBars', 'GameplayFooter')}
+        strings['DefaultHeight'] = text['Default'] % f"{settings['default_height']}p"
+        strings['DefaultRate'] = text['Default'] % f"{settings['default_hz']} Hz"
+        (directory / f'{language}.lproj').mkdir()
+        with (directory / f'{language}.lproj' / 'Root.strings').open('wb') as stream:
+            plistlib.dump(strings, stream, fmt=plistlib.FMT_BINARY)
+    return directory
+
+
 def shell_display_names(shell, fallback):
     """Return {language: app name}. "en" is the default name. The names are the official titles from
     control.nacp (tools/game_titles.py). Without a table, the app uses fallback for all languages."""
@@ -204,6 +277,12 @@ def main():
         if shell.get('native_drawable'): info['TouchableNativeDrawable'] = True
         if shell_controller_haptics(shell): info['TouchableControllerHaptics'] = True
         if shell_tv_mode_audio_route(shell): info['TouchableTVModeAudioRoute'] = True
+        player_settings = shell_player_settings(shell, game.profile.get('environment', {}))
+        settings_bundle = stage_settings_bundle(player_settings, gen / 'Settings.bundle')
+        if player_settings:
+            info['TouchablePlayerSettings'] = {'RenderHeights': player_settings['render_heights'],
+                                               'DisplayHz': player_settings['display_hz'],
+                                               'HealthBars': player_settings['health_bars']}
         localizations = shell_localizations(shell)
         if localizations:
             info['CFBundleLocalizations'] = localizations
@@ -236,8 +315,8 @@ def main():
             ref = obj('ref:' + str(path), f'isa=PBXFileReference; lastKnownFileType={kinds[path.suffix]}; path={quote(path)}; sourceTree="<absolute>";')
             refs.append(ref)
             source_build.append(obj('build:' + str(path), f'isa=PBXBuildFile; fileRef={ref};'))
-        for path in (modules, shaders, game.content_dir / 'RomFS', assets, *name_folders):
-            kind = 'folder.assetcatalog' if path.suffix == '.xcassets' else 'folder'
+        for path in (modules, shaders, game.content_dir / 'RomFS', assets, *name_folders, *([settings_bundle] if settings_bundle else [])):
+            kind = {'.xcassets': 'folder.assetcatalog', '.bundle': 'wrapper.plug-in'}.get(path.suffix, 'folder')
             ref = obj('ref:' + str(path), f'isa=PBXFileReference; lastKnownFileType={kind}; path={quote(path)}; sourceTree="<absolute>";')
             refs.append(ref)
             resource_build.append(obj('build:' + str(path), f'isa=PBXBuildFile; fileRef={ref};'))

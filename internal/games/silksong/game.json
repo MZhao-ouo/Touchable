@@ -4,7 +4,7 @@
   "display_name": "丝之歌",
   "product_name": "Silksong",
   "bundle_id": "com.mmmz.TouchableSilksong",
-  "build_version": 33,
+  "build_version": 36,
   "title_id": "010013c00e930000",
   "profile": "profile.json",
   "content_dir": "v655360",
@@ -19,7 +19,8 @@
   ],
   "runtime_sources": [
     "runtime/ss_display.c",
-    "runtime/ss_touch_ui.c"
+    "runtime/ss_touch_ui.c",
+    "runtime/ss_enemy_bars.c"
   ],
   "common_runtime_sources": [
     "runtime/common/ss_host.c",
@@ -34,6 +35,7 @@
     "runtime/common/ss_net.c",
     "runtime/common/ss_input.c",
     "runtime/common/ss_pointer.c",
+    "runtime/common/ss_health_bars.c",
     "runtime/common/ss_haptics.c",
     "runtime/common/ss_display.c",
     "runtime/common/ss_shader_capture.c",
@@ -69,7 +71,12 @@
       "zh-Hans": "空洞骑士 丝之歌",
       "pt-BR": "Hollow Knight: Silksong"
     },
-    "deployment_target": "26.0"
+    "deployment_target": "26.0",
+    "player_settings": {
+      "render_heights": [720, 900, 1080, 1440],
+      "display_hz": [60, 120],
+      "health_bars": true
+    }
   },
   "host": {
     "deployment_target": "26.0"
