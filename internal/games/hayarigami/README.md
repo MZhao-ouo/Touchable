@@ -44,11 +44,12 @@ Game inputs, keys, extracted files, logs and builds remain outside Git.
 
 ## Current acceptance scope
 
-The user is testing iPhone build 6. Its collection title renders.
+Build 7 is now installed on iPhone 16. Its post-install launch check is pending device unlock.
+Build 6 rendered the collection title during the user test.
 The user confirmed that touch A opens the three-game selector.
 The Mac host also reached part 1 story text. This does not establish complete-game support.
 The source build 7 adds an original icon and a pipeline-cache stability fix.
-Do not interrupt the user's current device test to install it.
+The user authorized updating the phone after the regression checks.
 
 Remaining checks are manual save and cold reload, part 2/3 story flow, audio/video synchronization, background/resume on device and long sessions.
 One extracted geometry shader is unsupported. No test requests it so far.
@@ -197,7 +198,8 @@ The shader compiler now pins Metal 4.0 and the OS 26 deployment floor.
 Actual emitted compiler metadata is checked. The current shader chain is `033e5e61f36e`.
 Build 6 compiled, signed and installed. The actual iPhone collection title renders.
 The user confirmed A opens the selector and reported normal initial operation.
-The phone keeps build 6 while the user tests it.
+Build 7 later installed as an update after the user authorized it.
+No uninstall was needed. Its post-install launch check is pending device unlock.
 
 The Mac host rendered part 1 title, prologue selection, AVC/AAC film and story text.
 The frame `play8-14160.png` shows the first story line after bounded input.
@@ -213,7 +215,8 @@ A fresh two-minute film run keeps the pipeline count at three and resident memor
 The earlier run reached about 9 GB over the same interval.
 This bounded check does not establish hour-long stability.
 Build 7 contains both fixes and the [original app icon](ios/Artwork/README.md).
-It is a build candidate. It has not replaced the user's build 6.
+Its iOS build and strict/deep signature check pass.
+The phone inventory confirms version 0.1, build 7.
 
 The integrated Python suite has 77 checks. Native results include NVN 108, GPU deswizzle 19,
 clear/cache 29 and alpha 48 pixel comparisons. Separate tests cover display services,

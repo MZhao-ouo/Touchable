@@ -56,11 +56,11 @@ The shader extractor builds 127 records. One geometry record remains unsupported
 On 2026-10-29 the Mac host rendered the collection selector, part 1 menus, opening film and story text.
 iPhone 16 build 6 renders the collection title. The user confirmed A opens the selector and reported normal initial operation.
 Build 6 fixed the iOS 26.2.1 rejection of Xcode 27.1 default Metal 4.1 libraries.
-Build 7 source adds an original icon and bounds pipeline cache growth from unused attachment masks.
+Build 7 adds an original icon and fixes unused pipeline masks and movie output-copy lifetimes.
 Movie decoding uses Apple AVC/AAC at the original guest decoder boundary. Tests cover foreground retry and output ownership.
 Shared display, sparse texture, alpha, GPU fence, timestamp, save-commit and polling AudioOut changes have focused native coverage.
 Manual save/reload, part 2/3 story flow, audible movie synchronization and long device sessions remain unverified.
-The user is testing build 6. Do not reinstall or interrupt that test without a new request.
+The user authorized the later update. Build 7 is installed. Its post-install launch check is pending device unlock.
 The Mac is now macOS 27.0.1. The earlier macOS 15 Metal 4 limit is historical.
 See [the game record](../../internal/games/hayarigami/README.md) for evidence, build steps and limits.
 
