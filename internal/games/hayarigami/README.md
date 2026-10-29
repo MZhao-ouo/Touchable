@@ -44,7 +44,8 @@ Game inputs, keys, extracted files, logs and builds remain outside Git.
 
 ## Current acceptance scope
 
-Build 7 is now installed on iPhone 16. Its post-install launch check is pending device unlock.
+Build 7 is installed and launched on iPhone 16 after device unlock.
+The user confirmed a visible title/menu and an A-triggered page change.
 Build 6 rendered the collection title during the user test.
 The user confirmed that touch A opens the three-game selector.
 The Mac host also reached part 1 story text. This does not establish complete-game support.
@@ -199,7 +200,13 @@ Actual emitted compiler metadata is checked. The current shader chain is `033e5e
 Build 6 compiled, signed and installed. The actual iPhone collection title renders.
 The user confirmed A opens the selector and reported normal initial operation.
 Build 7 later installed as an update after the user authorized it.
-No uninstall was needed. Its post-install launch check is pending device unlock.
+No uninstall was needed. After unlock, the user confirmed a title/menu and an A-triggered page change.
+The captured log reaches frame 10,200 without a fatal error.
+It opens CoreAudio output and configures 1920x1080 AVC and 48 kHz stereo AAC decoders.
+Resident samples are about 326 MB in the menu and 617 MB after movie entry.
+This is a short startup/input check. It does not establish movie synchronization or long-session stability.
+Diagnostic frame files were not saved because the update changed the data-container path.
+The visual result is a user confirmation. Runtime metrics come from the copied device log.
 
 The Mac host rendered part 1 title, prologue selection, AVC/AAC film and story text.
 The frame `play8-14160.png` shows the first story line after bounded input.

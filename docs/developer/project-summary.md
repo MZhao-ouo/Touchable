@@ -60,7 +60,9 @@ Build 7 adds an original icon and fixes unused pipeline masks and movie output-c
 Movie decoding uses Apple AVC/AAC at the original guest decoder boundary. Tests cover foreground retry and output ownership.
 Shared display, sparse texture, alpha, GPU fence, timestamp, save-commit and polling AudioOut changes have focused native coverage.
 Manual save/reload, part 2/3 story flow, audible movie synchronization and long device sessions remain unverified.
-The user authorized the later update. Build 7 is installed. Its post-install launch check is pending device unlock.
+The user authorized the later update. Build 7 is installed and launched after unlock.
+The user confirmed the title/menu and an A-triggered page change. A captured log reaches frame 10,200 without a fatal error.
+It configures AVC/AAC movie decoders. Menu and movie-entry resident samples are about 326 MB and 617 MB.
 The Mac is now macOS 27.0.1. The earlier macOS 15 Metal 4 limit is historical.
 See [the game record](../../internal/games/hayarigami/README.md) for evidence, build steps and limits.
 
