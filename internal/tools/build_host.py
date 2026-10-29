@@ -48,7 +48,8 @@ def main():
         write_game_header(game, game.host_dir)
         includes = (game.host_dir, ROOT / 'runtime/common', game.game_dir / 'runtime', host, gfx / 'nvn/include', gfx / 'tex')
         flags = ['-arch', 'arm64', '-mmacosx-version-min=' + game.minimum_macos_version,
-                 '-O1', '-g', '-Wall', '-Wno-unused-function', '-Wno-deprecated-declarations', '-fobjc-arc', '-DSS_HOST_CLI']
+                 '-O1', '-g', '-Wall', '-Wno-unused-function', '-Wno-deprecated-declarations',
+                 '-Werror=unguarded-availability-new', '-fobjc-arc', '-DSS_HOST_CLI']
         flags += ['-D' + name for name in game.compile_defines] + ['-I' + str(path) for path in includes]
         config = game.host_dir / 'config.mk'
         relative_host = Path(os.path.relpath(game.host_dir, ROOT))

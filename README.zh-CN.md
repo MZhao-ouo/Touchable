@@ -1,6 +1,19 @@
-# Touchable
+<p align="center">
+  <img src="docs/assets/logo.png" alt="Touchable logo" width="128">
+</p>
 
-[English](README.md) | **简体中文**
+<h1 align="center">Touchable</h1>
+
+<p align="center"><i>为你自己的 Switch 游戏带来 iOS 原生体验</i></p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/iOS%20%7C%20iPadOS-26%2B-000000?logo=apple&logoColor=white" alt="iOS and iPadOS 26+">
+  <img src="https://img.shields.io/badge/Mac-Apple%20Silicon-000000?logo=apple&logoColor=white" alt="Apple Silicon Mac">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-e60012" alt="MIT License"></a>
+  <a href="https://discord.gg/AKhWUYNKg7"><img src="https://img.shields.io/badge/Discord-Join-5865F2?logo=discord&logoColor=white" alt="Join the Discord server"></a>
+</p>
+
+<p align="center"><a href="README.md">English</a> | <b>简体中文</b></p>
 
 Touchable 为移植游戏带来 **iOS 原生体验**，优化触摸操作、虚拟按键、画面和性能。**请使用你自己的 Switch 游戏文件**，在 Apple Silicon Mac 上构建 iPhone 和 iPad 原生游戏。
 
@@ -17,12 +30,20 @@ Touchable 为移植游戏带来 **iOS 原生体验**，优化触摸操作、虚�
 
 ## 专属改进
 
-| 游戏     | 游戏文件版本             | 优化改进                                                     |
-| -------- | ------------------------ | ------------------------------------------------------------ |
-| 节奏天国 | v0 (nsp)                 | 触摸操作适配每个关卡；更少的屏幕按键，减少画面遮挡；更直觉的游玩方式和反馈；环境光黑边 |
-| 丝之歌   | v0 (nsp) + v655360 (nsp) | 自适应屏幕尺寸；全分辨率；ProMotion 屏幕 120Hz |
+点击游戏查看它的专属改进。
 
-查看[游戏截图](SCREENSHOTS.md)。
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <a href="docs/games/rhythm-heaven-groove.zh-CN.md"><img src="docs/assets/rhythm-heaven-level-stage.jpg" alt="节奏天国 奇迹之星"></a><br>
+      <a href="docs/games/rhythm-heaven-groove.zh-CN.md"><b>节奏天国 奇迹之星</b></a>
+    </td>
+    <td align="center" width="50%">
+      <a href="docs/games/silksong.zh-CN.md"><img src="docs/assets/silksong-gameplay.jpg" alt="空洞骑士 丝之歌"></a><br>
+      <a href="docs/games/silksong.zh-CN.md"><b>空洞骑士 丝之歌</b></a>
+    </td>
+  </tr>
+</table>
 
 ## 开始使用
 
@@ -50,6 +71,16 @@ Touchable 为移植游戏带来 **iOS 原生体验**，优化触摸操作、虚�
 开发前请阅读 [AGENTS.md](AGENTS.md)。
 详细文档和启动器界面使用英文。
 本项目基于 [d2r-mobile](https://github.com/jhaizhou-ops/d2r-mobile)。
+
+## 社区
+
+加入 [Discord 服务器](https://discord.gg/AKhWUYNKg7)，提问、反馈问题或分享建议。
+
+## 致谢与引用
+
+如果你在自己的项目中使用或改编 Touchable 的触控操作设计，请注明作者 **mzhao** 并附上[本仓库链接](https://github.com/MZhao-ouo/Touchable)。
+该设计包括液态玻璃虚拟手柄、按关卡适配的触摸区域、在按键之间滑动，以及可直接触摸的菜单。
+引用本项目时，可使用 GitHub 上的 **Cite this repository**，或参阅 [CITATION.cff](CITATION.cff)。
 
 ## 许可和声明
 

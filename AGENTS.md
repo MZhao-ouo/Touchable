@@ -56,6 +56,17 @@ rg -n 'SEARCH_TEXT' internal/games internal/runtime internal/platform internal/t
 
 The project root has a local Git repository as of 2026-10-16. Check its status at task start. Keep local game data, keys, saves, signing files, apps, and IPA files outside Git. If Git is absent in another copy, use file comparisons and checksums. The upstream source has its own Git repository. Its modified files can contain the existing project patch.
 
+### Local and public history
+
+The public repository is `origin` (`MZhao-ouo/Touchable` on GitHub). Its `main` has a different history from the local `main`. This is intentional. It is not divergence.
+
+- The public history starts with the commit "Initial public release of Touchable". That commit replaces the private local history before the public release.
+- Each later local commit has a public copy with the same change and a different commit ID.
+- The two histories have no merge base. `git rev-list --count` then reports commits on both sides. Do not report this as divergence.
+- To compare the two branches, compare their trees: `git rev-parse HEAD^{tree}` and `git rev-parse origin/main^{tree}`. Equal trees mean equal content.
+- Do not pull, merge, or rebase between the two branches. Copy a change to the other branch with `git cherry-pick`.
+- A pull request merges on the public `main`. Copy its merged commits to the local `main` with `git cherry-pick`. Keep the original author.
+
 ## Verify and finish
 
 Select checks from the workflow's validation table. Run checks for the changed behavior. Check both games after a shared runtime or graphics change. For documentation changes, check links, file references, and command syntax.

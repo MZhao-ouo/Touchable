@@ -1,5 +1,98 @@
 # Rhythm Heaven
 
+
+## 2026-10-24: Upstream graphics update; translation stays on the game thread (source change, no build)
+
+- The shared Metal layer now includes the newer upstream graphics code. Its separate translation thread broke the sprite batcher adapter: the game rewrote command memory before it was encoded, and the screen stayed black on the Mac host.
+- `runtime/rh_batch.c` sets `DM_NVN_SYNC=1` when it skips the batcher waits, so Rhythm Heaven translates each submit inside the submit call as before. It keeps the other upstream changes (state caching, pool residency on first use).
+- Mac host: the first screens and a 2400x1080 frame with ambient bars are the same as before. No Rhythm Heaven build or device test.
+- See [the upstream graphics merge record](../../../.touchable/work/silksong/reports/upstream-gfx-merge-20261024/README.md).
+
+## 2026-10-24: Map input guard during unlock transitions
+
+From pull request #9 by SDR (issue #2: a stage was not unlocked and the next remix was unlocked instead). The core guard was applied on top of the select-then-confirm map.
+- The native map command handler (`main+0x1d1560`) moves the map only in input state 1 (`scene+0x5288`) and uses the selector in state 2. Other states, for example an unlock transition, ignore input. The touch adapter did not check this, so a tap could change the selection that the unlock routine then used.
+- `runtime/rh_menu.c`: map selection, entry, and dragging run only in state 1 (`rh_map_input_ready()`). State 2 keeps the selector touch path. Otherwise the adapter publishes an empty menu frame, resets the gesture, and drops queued touches; the native map function still runs.
+- The PR author reproduced a wrong unlock target in a controlled ARM64 emulation and saw the guard prevent it. That is emulation evidence, not a device reproduction. The change does not repair progress already saved in the wrong state.
+- Checks: `test_menu` (state 1 accepted; 0, 2, −1, 3, 99, `INT_MIN`, and `INT_MAX` blocked) and the Mac host build passed. Mac host test on the cafe-fixed save: the map dragged, a tap on the selected Remix 8 opened its selector, and a tap on "常规游玩" in the selector started the remix. A tap during a real unlock transition was not tested. Not built for iOS.
+
+## 2026-10-23: Select, then confirm on the level map (build 40)
+
+User request: change every double-tap confirm to select-then-confirm.
+- `runtime/rh_menu.c`: a tap on the selected level starts it. A tap on another level selects it. Before, a level needed two taps even when it was already selected. `rh_map_tap_activate()` and its test cases are removed; `test_menu` keeps the scroll-limit cases.
+- Menus, dialogs, and the pause menu already act on one tap. The Rhythm Toys already use select-then-confirm.
+- Mac host test: tap on level 3 selected it, a second tap started it; after B, one tap on the still-selected level 3 started it. `test_menu` passed; both Mac host builds passed with no warnings.
+- Build 40 (IPA SHA-256 `1343d0c8e0ead233b08818b9fc2c9914a0028047ae0a3bef7a22fc84831e9130`, 41 warnings) is installed on the iPhone and the iPad mini (2026-10-23). The map change was not tested on a device.
+
+## 2026-10-23: Rhythm Toys touch and Drum Lessons controller (build 39)
+
+The user asked for touch in the Rhythm Toys and for a virtual controller in Drum Lessons.
+- Who's Got Rhythm? (`rabbit`): a tap on a rabbit selects it; a tap on the selected rabbit confirms it. The targets follow the rabbits in every grid (2×1 to 5×5). The front row takes a tap where two rabbits overlap. The phone shows the touch targets only while the game takes a choice; the dialogs and Game Over keep the A area.
+- Sound boards (`audio_tile`): a tap selects a cell, a second tap opens the note palette (A). The palette also takes select-then-confirm. "A 摆放" presses A, "X 移除" presses X. The speed panel and "Y 速度" press Y. A tap on a page at the top selects that page (ZL/ZR presses); "ZL" and "ZR" press one step. "+ 返回" presses +. The phone shows no D-pad there.
+- Drum Lessons (`drummer`): a new `SS_TOUCH_PAD` hint. The phone shows the D-pad at the lower left, A, B, X, and Y in a diamond at the lower right, ZR above them, and − and + at the sides. There is no touch area. The lesson texts use A, B, X, Y, the four directions, ZR, and − (`stage_drummer_00.msbt`; E0E7 is ZR, as the sound board shows).
+- How: `rh_menu.c` finds the toy object in the minigame scene's object list and publishes a menu frame with targets. A tap on an item that is not selected walks the cursor with one D-pad (or ZL/ZR) press at a time until the item is selected. A tap on the selected item presses A. Each press goes through the game's own input checks (`ss_touch_press()`, new in `ss_input.c` and `ss_touch.h`). Addresses and offsets are in the comment above `toy_input()`.
+- Mac host (unit and host tests): `test_touch` and `test_menu` passed. Rabbits: the dialogs kept the level frame. In two runs, 32 rounds were answered by a select tap and a confirm tap (walks of 1 and 2 presses; grids 2×1, 2×2, 3×3, and 4×4). The test script missed the frame in 2 rounds; the score reached 10. Game Over returned to the level frame. Sound board: walk to a cell (3 presses), palette open, palette walk and place (blue note), page walk to page 3, Remove, and Speed (▶▶ to ▶▶▶) passed. All button targets cover their labels. Evidence: `.touchable/work/rhythm-heaven/reports/toy-touch-20261023/`.
+- Not tested: Drum Lessons. The host saves keep the cafe closed ("店里现在还没准备好"), so the lesson scene and the full controller were not reached. The phone layout was not tested on a device.
+- Builds: both Mac hosts and the Xcode device build (41 warnings, none in the changed files) passed. IPA `IPA/rhythm-heaven/RhythmHeaven-build39-toy-touch-20261023.ipa` (SHA-256 `340bb20bf7c4c91a38ba67002ef6335a4fdc76884dcce6e029fcacdc233e846e`). It also has the localized app names. Installed on the iPhone on 2026-10-23 (save backup `.touchable/saves/rhythm-heaven/phone-before-install-20261023-081752-3c995a/`). Not installed on the iPad mini: the game was running there.
+
+## 2026-10-23: App name follows the language
+
+The home screen name now follows the language of the device. The names are the official titles from the game's `control.nacp` (`internal/tools/game_titles.py`), stored in `ios.display_names` in `game.json`.
+- Rhythm Heaven: "Rhythm Heaven Groove" (English, Latin American Spanish, Canadian French), "Rhythm Paradise Groove" (British English, French, German, Spanish, Italian, Dutch), "リズム天国 ミラクルスターズ", "리듬 천국 미라클 스타즈", "節奏天國 奇蹟之星", and "节奏天国 奇迹之星".
+The default name is English. The Files app folder shows the same localized name; iOS has no separate setting for it. The product name, the save folders, and the IPA names stay English.
+Checked in the iOS Simulator (Simplified Chinese) with a test app that uses the generated names: the home screen and the Files folder show the Chinese name. Build 39 includes the names.
+
+## 2026-10-21: TV mode follows the audio output (build 38)
+
+The user asked to remove the mode button and to choose the mode from the audio output.
+- Handheld mode: built-in speaker, built-in receiver, wired headphones, USB audio, and line out.
+- TV mode: every other output, for example Bluetooth, AirPlay, and HDMI. In TV mode the game offers its latency calibration.
+- The app reads the output at launch (before the game starts), on each audio route change, and when the app becomes active. A change switches the game at once with `dm_opmode_set()` (build 37).
+- `game.json` `ios.tv_mode_audio_route` enables this (`TouchableTVModeAudioRoute` in Info.plist). Only Rhythm Heaven sets it. `DM_OPMODE` in the launch environment still wins for device tests.
+- Removed: the TV mode button, the saved `TouchableTVMode` setting, and the level flag that hid the button.
+- Device evidence from build 37: the user switched handheld → TV → handheld on the iPhone; the game took notification 30 both times.
+- Checks: 50 Python tests, `test_touch`, the App.m syntax check, both Mac host builds, the Mac live-switch test, and the Xcode device build (41 warnings) passed. The route detection itself was not tested on a device.
+Build 38 is installed on the iPhone (2026-10-21, second try; the first try lost the device connection and left build 37). The saves matched the backup `.touchable/saves/rhythm-heaven/phone-before-install-20261021-145922-75e359/`. Build 38 is also installed on the iPad mini (2026-10-21 21:49); its saves matched the backup `phone-before-install-20261021-214935-12b07d`. On the iPad, a remote launch logged `TV mode: launch handheld, audio output Speaker` and ran at a frame time p50 of 16.67 ms. A route change (Bluetooth) was not tested on a device. The iPad save had the cafe locked (menu entry 0 = 0); it was fixed afterwards (see the cafe section).
+The current IPA is `IPA/rhythm-heaven/RhythmHeaven-build38-tv-audio-route-20261021.ipa` (SHA-256 `e5d5269d9dd2aff4ad9e3aa6bf82fe59de4107b2193606eef3ed996643bc8e99`). The build 37 IPA set moved to `.touchable/archive/ipa/rhythm-heaven/before-build38/`.
+
+## 2026-10-21: TV mode switches without a restart (build 37)
+
+The TV button now changes the mode at once. A restart is no longer needed.
+- `dm_opmode_set()` in `ss_platform.c` changes the operation mode while the game runs, like docking a Switch. The game gets notification 30 (operation mode changed) after it enables that notification.
+- `ss_input.c` signals the controller style events, so the game reads the controller style again (handheld 0x2, full-key 0x1).
+- `App.m`: after the confirmation, the button calls `dm_opmode_set()`, changes its icon, and saves `TouchableTVMode` for the next launch.
+- Mac host test hook: `SS_OPMODE_FILE` names a file with 0 or 1. A change switches the mode.
+- Mac host (start menu): handheld → TV → handheld. Each time the log shows the change, the new controller style, and `the game took notification 30`. The game kept running, and A opened the level map in TV mode. See `.touchable/work/rhythm-heaven/reports/tv-live-20261021/`.
+- Not tested: whether the game offers the TV latency calibration after a live switch.
+- Checks: 50 Python tests, `test_touch`, the App.m syntax check, both Mac host builds, a 30 s Silksong host run (handheld, 120 Hz), and the Xcode device build passed.
+Build 37 is installed on the iPhone (2026-10-21). The saves matched the backup `.touchable/saves/rhythm-heaven/phone-before-install-20261021-144426-ab15f5/`. The iPad mini was unavailable and has build 35.
+The build 37 IPA `RhythmHeaven-build37-tv-live-20261021.ipa` (SHA-256 `07bd52d193a1b0b7107953a5231e1c5df2a917cc460b8dc0cd8ad41625c8a2ef`) is now in `.touchable/archive/ipa/rhythm-heaven/before-build38/`. The build 36 IPA set moved to `.touchable/archive/ipa/rhythm-heaven/before-build37/`.
+
+## 2026-10-21: Long list taps and optional TV mode (build 36)
+
+The user liked the ideas of pull requests #6 and #7 (sdmj76) and asked for them in the local code. Their code was used where it fits. The changes below differ from the pull requests.
+
+Long lists (`runtime/rh_menu.c`):
+- Before: in a scrolling list, only rows on the first page had a touch area. After the list scrolled, most visible rows could not be tapped.
+- Now each visible row gets its place from the first-page row position and the row spacing.
+- A scrolling list keeps an empty menu frame when no row is found, so a drag does not turn into an A or D-pad press.
+- Change from #7: a short (non-scrolling) list with no targets still returns no frame. The fallback A and D-pad stay for menus that the adapter cannot read.
+- Mac host: music room, category 单人游戏, 20 rows down (past 三只螃蟹): 11 tap targets instead of 2.
+
+Optional TV mode (`App.m`, `ss_platform.c`, `ss_input.c`, `ss_touch.h`, `rh_game.c`):
+- `nn::oe::GetOperationMode` follows `DM_OPMODE` (0 handheld, 1 TV). The default is handheld, so other games do not change.
+- In TV mode the game sees a full-key controller and offers its TV latency calibration at start.
+- A glass TV button shows outside levels and not during loads. A tap asks for confirmation and saves `TouchableTVMode`. The new mode starts with the next app launch.
+- `game.json` `ios.tv_mode_toggle` enables the button (`TouchableTVModeToggle` in Info.plist). Only Rhythm Heaven sets it.
+- Change from #6: on iPad the button is in the top bar, left of −. The #6 position was inside the game picture. It also hides during loads.
+- Mac host with `DM_OPMODE=1`: log `Operation mode: TV`, and the game opens the calibration screen ("请配合念4的声音按A哦"). Calibration was not completed in the test.
+- iOS Simulator (rhythm layout test app): the button is left of − on iPad mini and below − on iPhone.
+
+Checks: `test_menu`, `test_touch`, `test_touch_layout`, 50 Python tests, `games.py check`, Rhythm Heaven and Silksong Mac host builds, a 40 s Silksong host run (120 Hz, no red lines), and the Xcode device build (41 warnings, none in `App.m`) passed.
+Build 36 is installed on the iPhone (2026-10-21). The three save files matched the pre-install backup `.touchable/saves/rhythm-heaven/phone-before-install-20261021-142621-b0c6a1/`. The cafe stays unlocked. The iPad mini was unavailable, so it still has build 35.
+The build 36 IPA is `RhythmHeaven-build36-tv-mode-long-lists-20261021.ipa` (SHA-256 `c8641a7537daee532de405c8ce31c294ffd164071f1a9a719d78aee5bd5cbdf5`), now in `.touchable/archive/ipa/rhythm-heaven/before-build37/`. The build 35 IPA set moved to `.touchable/archive/ipa/rhythm-heaven/before-build36/`.
+Evidence: [the review record](../../../.touchable/work/rhythm-heaven/reports/pr-review-20261021/README.md).
+
 ## 2026-10-21: Cafe unlocked in the phone save
 
 The user reported that the cafe (咖啡店) could not be unlocked.
@@ -8,7 +101,8 @@ The game unlocks the cafe after an early event. In the phone save, all stages we
 The tool now unlocks entries 0–12 and leaves the `dummy` entry 13 unchanged. On a save that the old tool changed, it changes only the cafe byte (0x28: 0 → 3).
 Mac host test with a copy of the phone save: with the fix, the cafe item (coffee cup, "new" badge) shows in the menu column of the level map. Without the fix, it does not show. The cafe itself was not entered in the test.
 On 2026-10-21, the fixed save was written to the iPhone (`Documents/Saves/RhythmHeaven` and `.work`). The game was closed. The read-back matched.
-The backup is in `.touchable/saves/rhythm-heaven/phone-before-cafe-fix-20261021/`. The iPad mini save was not changed.
+The backup is in `.touchable/saves/rhythm-heaven/phone-before-cafe-fix-20261021/`.
+On 2026-10-21 (21:5x), the same fix was applied to the iPad mini save at the user's request. The game was closed. The fixed tool changed only byte 0x28 (0 → 3). Both save copies read back equal. The backup is in `.touchable/saves/rhythm-heaven/ipad-before-cafe-fix-20261021/`.
 Evidence: [the cafe record](../../../.touchable/work/rhythm-heaven/reports/cafe-unlock-20261021/README.md).
 
 ## 2026-10-21: Simplified Chinese with a Hong Kong or Taiwan region (source change, no build)
@@ -474,7 +568,7 @@ Direct touch in build 7:
 | Screen | Action |
 | --- | --- |
 | Normal list menu | Drag up and down in the list. Tap a visible item to execute it. Release after a drag does not execute an item |
-| Level map | Drag the map left and right. The first tap only selects a level. A second tap on the same level starts the game. Two taps are necessary even when the level was already selected. A drag or a change of the selected level resets the count |
+| Level map | Drag the map left and right. A tap on a level that is not selected selects it. A tap on the selected level starts the game |
 | Pause menu and common option pop-ups | Tap an option to execute it |
 | In-game "Y demonstration" hint | Holding the hint is the same as holding Y. Release is the same as releasing Y |
 | In-game "− skip" hint | A tap on the hint is the same as a press of − |

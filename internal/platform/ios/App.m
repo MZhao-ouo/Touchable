@@ -11,6 +11,7 @@
 #include "ss_haptics.h"
 #include "ss_touch.h"
 #include "ss_pointer.h"
+#include "ss_health_bars.h"
 #include "TouchLayout.h"
 
 int ss_host_run(const char *directory);
@@ -24,6 +25,31 @@ void ss_display_set_hz(int hz);
    an iPhone at 60 Hz, so the input display link asks for 80 to 120 Hz. The game starts at 60 Hz and follows the
    rate that the screen gives: 60 Hz in Low Power Mode, when the device is hot, or on a 60 Hz screen. */
 static int displayHzWanted = 60;
+
+/* TV mode follows the audio output when TouchableTVModeAudioRoute is set in Info.plist (only Rhythm Heaven).
+   The built-in speaker, wired headphones, USB audio, and line out are handheld mode. Bluetooth,
+   AirPlay, HDMI, and other outputs are TV mode, where the game offers its latency calibration. */
+static BOOL tvModeAudioRoute;
+void dm_opmode_set(int mode);
+static BOOL audioRouteIsTV(AVAudioSessionRouteDescription *route) {
+    NSSet *handheld = [NSSet setWithObjects:AVAudioSessionPortBuiltInSpeaker, AVAudioSessionPortBuiltInReceiver,
+                                            AVAudioSessionPortHeadphones, AVAudioSessionPortUSBAudio, AVAudioSessionPortLineOut, nil];
+    for (AVAudioSessionPortDescription *port in route.outputs) if (![handheld containsObject:port.portType]) return YES;
+    return NO;
+}
+static NSString *audioRouteName(AVAudioSessionRouteDescription *route) {
+    NSMutableArray *names = [NSMutableArray array];
+    for (AVAudioSessionPortDescription *port in route.outputs) [names addObject:port.portType];
+    return [names componentsJoinedByString:@","];
+}
+/* Switch the game while it runs, like docking a Switch (dm_opmode_set). Any thread. */
+static void followAudioRoute(const char *why) {
+    if (!tvModeAudioRoute) return;
+    AVAudioSessionRouteDescription *route = AVAudioSession.sharedInstance.currentRoute;
+    BOOL tv = audioRouteIsTV(route);
+    fprintf(stderr, "TV mode: audio output %s -> %s (%s)\n", audioRouteName(route).UTF8String, tv ? "TV" : "handheld", why);
+    dm_opmode_set(tv);
+}
 
 static CAMetalLayer *gameLayer;
 static UIViewController *gameController;
@@ -108,8 +134,24 @@ static void updateInput(void) {
     ss_input_set(mask | touchButtons | zoneButtons | pointerButtons, x, y);
 }
 
+/* The outline of a touch button. The user's sketch of 2026-10-23 makes ZL and ZR slanted and R a diamond. */
+typedef NS_ENUM(NSInteger, PadShape) { PadShapeRound, PadShapeLeanLeft, PadShapeLeanRight, PadShapeDiamond };
+
+/* The transform that gives a rounded rectangle of glass the outline of the shape. ZL leans like a
+   backslash and ZR like a slash (a shear). R is a square turned 45 degrees. */
+static CGAffineTransform padShapeTransform(PadShape shape, CGSize size) {
+    CGFloat lean = size.height > 0 ? 0.22 * size.width / size.height : 0;
+    if (shape == PadShapeLeanLeft) return CGAffineTransformMake(1, 0, lean, 1, 0, 0);
+    if (shape == PadShapeLeanRight) return CGAffineTransformMake(1, 0, -lean, 1, 0, 0);
+    if (shape == PadShapeDiamond) return CGAffineTransformMakeRotation(M_PI_4);
+    return CGAffineTransformIdentity;
+}
+
 @interface PadButton : UIButton
 @property(nonatomic) uint64_t bit;
+@property(nonatomic) PadShape shape;   /* a transform gives the glass this outline */
+@property(nonatomic, strong) UILabel *caption;   /* the upright title of a shaped button */
+@property(nonatomic, strong) UIImageView *captionImage;   /* the upright symbol of a shaped button */
 @property(nonatomic) BOOL appearanceHidden;   /* no look; the button still takes touches */
 @property(nonatomic) BOOL faded;              /* an unused direction: an outline without glass */
 @property(nonatomic) CGFloat hitMargin;   /* round touch area outside the button; 0 keeps the frame */
@@ -124,6 +166,49 @@ static void updateInput(void) {
 @property(nonatomic) CGRect homeFrame, mapFrame;   /* the frames in the pad and on the zoomed map */
 @end
 @implementation PadButton
+/* Place the button with its shape. A transformed view takes its place from bounds and center. */
+- (void)placeAt:(CGPoint)center size:(CGSize)size {
+    self.transform = CGAffineTransformIdentity;
+    self.bounds = (CGRect){CGPointZero, size};
+    self.center = center;
+    self.transform = padShapeTransform(self.shape, size);
+    [self setNeedsLayout];
+}
+/* The title of a shaped button stays upright: the caption undoes the button transform. */
+- (void)setCaptionText:(NSString *)text font:(UIFont *)font {
+    if (!self.caption) {
+        self.caption = [UILabel new];
+        self.caption.userInteractionEnabled = NO;
+        self.caption.textColor = UIColor.whiteColor;
+        self.caption.textAlignment = NSTextAlignmentCenter;
+        [self addSubview:self.caption];
+    }
+    self.caption.text = text;
+    self.caption.font = font;
+    [self setNeedsLayout];
+}
+- (void)setCaptionSymbol:(UIImage *)image {
+    if (!self.captionImage) {
+        self.captionImage = [UIImageView new];
+        self.captionImage.userInteractionEnabled = NO;
+        self.captionImage.tintColor = UIColor.whiteColor;
+        self.captionImage.contentMode = UIViewContentModeCenter;
+        [self addSubview:self.captionImage];
+    }
+    self.captionImage.image = image;
+    [self setNeedsLayout];
+}
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    for (UIView *view in @[self.caption ?: (id)NSNull.null, self.captionImage ?: (id)NSNull.null]) {
+        if (![view isKindOfClass:UIView.class]) continue;
+        [self bringSubviewToFront:view];
+        view.transform = CGAffineTransformIdentity;
+        [view sizeToFit];
+        view.center = CGPointMake(CGRectGetMidX(self.bounds), CGRectGetMidY(self.bounds));
+        view.transform = CGAffineTransformInvert(self.transform);
+    }
+}
 /* A touch stays with the button where it started. That button stays pressed until the finger lifts.
    A slide also presses another sliding button when the finger enters its touch area, and releases the
    button of the previous slide. The touch areas do not overlap, so the touch holds the first button and
@@ -182,11 +267,21 @@ static void updateInput(void) {
     [self releaseSlide];
     if (self.untracked) self.highlighted = NO;
     else [super touchesEnded:touches withEvent:event];
+    [self endPressLook];
 }
 - (void)touchesCancelled:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
     [self releaseSlide];
     if (self.untracked) self.highlighted = NO;
     else [super touchesCancelled:touches withEvent:event];
+    [self endPressLook];
+}
+/* The system glass press response fades out over about 0.2 seconds after the release. A new glass
+   background ends it at once (user request on 2026-10-23: a faster button response). */
+- (void)endPressLook {
+    if (!self.configuration) return;
+    UIButtonConfiguration *config = self.configuration;
+    self.configuration = nil;
+    self.configuration = config;
 }
 /* The mark of a button that a slide holds: a white fill, as bright as the lit D-pad arm (DPAD_LIT_FILL). */
 - (void)showSlideMark:(BOOL)shown {
@@ -197,7 +292,8 @@ static void updateInput(void) {
         [self addSubview:self.slideMark];
     }
     self.slideMark.frame = self.bounds;
-    self.slideMark.layer.cornerRadius = self.bounds.size.width / 2;
+    /* A circle or a capsule. A shaped button has a rounded rectangle, which its transform shapes like the button. */
+    self.slideMark.layer.cornerRadius = self.shape == PadShapeRound ? fmin(self.bounds.size.width, self.bounds.size.height) / 2 : 10;
     self.slideMark.hidden = !shown;
 }
 /* The touch area is the drawn circle or capsule, widened by hitMargin on each side. */
@@ -817,6 +913,48 @@ static CGRect gameRect(CGSize size) {
 + (Class)layerClass { return CAMetalLayer.class; }
 @end
 
+/* Enemy health bars from the game adapter (ss_health_bars.h), above the game picture. The game picture fills
+   the view. The layers are kept from frame to frame. */
+@interface HealthBarView : UIView
+- (void)refreshHidden:(BOOL)hidden;
+@end
+@implementation HealthBarView {
+    NSMutableArray<CALayer *> *_backs, *_fills;
+}
+- (void)refreshHidden:(BOOL)hidden {
+    ss_health_bar bars[SS_HEALTH_BARS_MAX];
+    uint64_t age = 0;
+    int count = hidden ? 0 : ss_health_bars_read(bars, SS_HEALTH_BARS_MAX, &age);
+    if (age > 150000000ull) count = 0;   /* no enemy update for 150 ms, for example a room change */
+    if (!count && !_backs.count) return;
+    if (!_backs) { _backs = [NSMutableArray new]; _fills = [NSMutableArray new]; }
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    CGSize size = self.bounds.size;
+    CGFloat top = self.safeAreaInsets.top + 6, height = 5;
+    for (int i = 0; i < count; ++i) {
+        if (i == (int)_backs.count) {
+            CALayer *back = [CALayer layer], *fill = [CALayer layer];
+            back.backgroundColor = [UIColor colorWithWhite:0 alpha:0.6].CGColor;
+            back.borderColor = [UIColor colorWithWhite:1 alpha:0.55].CGColor;
+            back.borderWidth = 0.5; back.cornerRadius = 3;
+            fill.backgroundColor = [UIColor colorWithRed:0.86 green:0.18 blue:0.2 alpha:1].CGColor;
+            fill.cornerRadius = 2;
+            [self.layer addSublayer:back]; [self.layer addSublayer:fill];
+            [_backs addObject:back]; [_fills addObject:fill];
+        }
+        /* The bar is as wide as the enemy, 36 to 160 points, and 8 points above its top. */
+        CGFloat width = fmin(fmax(bars[i].width * size.width, 36), 160);
+        CGFloat x = bars[i].x * size.width - width / 2, y = fmax(bars[i].y * size.height - 8 - height, top);
+        _backs[i].frame = CGRectMake(x - 1, y - 1, width + 2, height + 2);
+        _fills[i].frame = CGRectMake(x, y, width * fmin(fmax(bars[i].fill, 0), 1), height);
+        _backs[i].hidden = _fills[i].hidden = NO;
+    }
+    for (NSUInteger i = count; i < _backs.count; ++i) _backs[i].hidden = _fills[i].hidden = YES;
+    [CATransaction commit];
+}
+@end
+
 static void *runGame(void *unused) {
     @autoreleasepool { pthread_setname_np("Touchable main"); ss_host_run(moduleDirectory.fileSystemRepresentation); }
     return NULL;
@@ -824,6 +962,7 @@ static void *runGame(void *unused) {
 
 @interface GameViewController : UIViewController
 @property(nonatomic, strong) MetalView *metalView;
+@property(nonatomic, strong) HealthBarView *healthBars;   /* only when SS_HEALTH_BARS is set */
 @property(nonatomic, strong) PadDpad *dpad;
 @property(nonatomic, strong) GlassLayer *glassLayer;   /* the Switch-style controls, in one glass container */
 @property(nonatomic, strong) CAShapeLayer *dimming;    /* darkens the game behind the visible controls */
@@ -847,6 +986,7 @@ static void *runGame(void *unused) {
 @property(nonatomic) BOOL loadingScreen;  /* a loading screen: all touch controls are hidden */
 @property(nonatomic) int pointerMode;
 @property(nonatomic) BOOL levelControlsVisible;
+@property(nonatomic) BOOL fullPad;   /* the scene uses the full controller (SS_TOUCH_PAD, Drum Lessons) */
 @property(nonatomic) BOOL loggedControls;
 @property(nonatomic) BOOL sideControlsFit;
 @property(nonatomic) BOOL verticalBars;
@@ -868,6 +1008,11 @@ static void *runGame(void *unused) {
     self.metalView = [MetalView new];
     self.metalView.userInteractionEnabled = NO;
     [self.view addSubview:self.metalView];
+    if (ss_health_bars_enabled()) {
+        self.healthBars = [HealthBarView new];
+        self.healthBars.userInteractionEnabled = NO;
+        [self.view addSubview:self.healthBars];
+    }
     gameLayer = (CAMetalLayer *)self.metalView.layer;
     gameLayer.device = MTLCreateSystemDefaultDevice();
     gameLayer.pixelFormat = MTLPixelFormatBGRA8Unorm;
@@ -879,8 +1024,9 @@ static void *runGame(void *unused) {
     NSArray *names; const int *bits;
     static const int switchBits[] = {0, 1, 2, 3, 6, 7, 8, 9, 10, 11};
     /* A stays transparent. B and +/- use the black side bars.
-       Direction controls follow the current level frame. Y and X show when the level uses them. */
-    static const int rhythmBits[] = {12, 13, 14, 15, 1, 11, 10, 3, 2};
+       Direction controls follow the current level frame. Y and X show when the level uses them.
+       A visible A and ZR show only with the full controller. */
+    static const int rhythmBits[] = {12, 13, 14, 15, 1, 11, 10, 3, 2, 0, 9};
     if (self.rhythmLayout) {
         TouchZone *a = [[TouchZone alloc] initWithBit:1ull << 0 title:@"A"];
         a.appearanceHidden = YES;
@@ -896,7 +1042,7 @@ static void *runGame(void *unused) {
         [self.view addSubview:a];
         [self.zones addObject:a];
         [self.zones addObject:self.singleLeftZone];
-        names = @[@"◀", @"▲", @"▶", @"▼", @"B", @"−", @"+", @"Y", @"X"]; bits = rhythmBits;
+        names = @[@"◀", @"▲", @"▶", @"▼", @"B", @"−", @"+", @"Y", @"X", @"A", @"ZR"]; bits = rhythmBits;
     } else {
         /* Menu touches go to the game. The pad above it keeps its own touches. */
         switchControls = YES;
@@ -920,7 +1066,14 @@ static void *runGame(void *unused) {
         button.bit = 1ull << bits[i];
         setGlassButton(button, glassButtonConfiguration());   /* the Switch title follows the layout size */
         button.accessibilityLabel = names[i];
-        button.slides = !self.rhythmLayout && i < 4;   /* A, B, X, Y */
+        button.slides = !self.rhythmLayout && (i < 4 || i == SS_PAD_ZR);   /* A, B, X, Y, and ZR */
+        if (!self.rhythmLayout && (i == SS_PAD_ZL || i == SS_PAD_ZR || i == SS_PAD_R || i == SS_PAD_L)) {
+            button.shape = i == SS_PAD_ZL ? PadShapeLeanLeft : i == SS_PAD_ZR ? PadShapeLeanRight : PadShapeDiamond;
+            UIButtonConfiguration *config = button.configuration;   /* a rounded rectangle of glass */
+            config.cornerStyle = UIButtonConfigurationCornerStyleFixed;
+            config.background.cornerRadius = 10;
+            button.configuration = config;
+        }
         if (self.rhythmLayout) {
             button.look = rhythmGlassConfiguration(names[i], i < 4 ? arrows[i] : nil);
             button.appearanceHidden = i < 4;
@@ -985,6 +1138,7 @@ static void *runGame(void *unused) {
 - (void)pollInput:(CADisplayLink *)link {
     [self followDisplayRate:link];
     [self.pointerView refresh];
+    [self.healthBars refreshHidden:self.loadingScreen || self.menuFrame || self.cutsceneFrame || self.mapFrame];
     int controls = self.leftZone ? ss_pointer_controls() : SS_CONTROLS_SHOW;
     if (self.leftZone && controls == SS_CONTROLS_KEEP) {
         /* A short gap in the game's frames, for example a fade. Keep the controls as they are. */
@@ -996,6 +1150,16 @@ static void *runGame(void *unused) {
         uint64_t hint = ss_touch_left_get();
         if (!hasPointer || frame.mode != SS_POINTER_HINTS || ss_touch_layout(hint) == SS_TOUCH_MENU) pauseMenu = NO;
         BOOL inLevel = hasPointer && frame.mode == SS_POINTER_HINTS && !pauseMenu && ss_touch_layout(hint) != SS_TOUCH_MENU;
+        /* Drum Lessons use the full controller. A touch menu, for example the pause menu, hides it. */
+        BOOL fullPad = ss_touch_layout(hint) == SS_TOUCH_PAD && !pauseMenu &&
+                       !(hasPointer && (frame.mode == SS_POINTER_MENU || frame.mode == SS_POINTER_MAP));
+        if (fullPad != self.fullPad) {
+            self.fullPad = fullPad;
+            [self.zones.firstObject cancelInput];
+            for (NSUInteger i = 0; i < 4; ++i) self.buttons[i].appearanceHidden = !fullPad && !self.levelControlsVisible;
+            [self.view setNeedsLayout];
+            if (getenv("RH_MENU_TRACE")) fprintf(stderr, "Touch full controller: %s\n", fullPad ? "shown" : "hidden");
+        }
         if (!inLevel) hint = SS_TOUCH_MENU;
         BOOL menu = ss_touch_layout(hint) == SS_TOUCH_MENU;
         BOOL dpad = ss_touch_layout(hint) == SS_TOUCH_DPAD;
@@ -1017,12 +1181,12 @@ static void *runGame(void *unused) {
         self.singleLeftZone.hidden = !single;
         BOOL directMenu = hasPointer && (frame.mode == SS_POINTER_MENU || frame.mode == SS_POINTER_MAP);
         TouchZone *a = self.zones.firstObject;
-        a.hidden = directMenu;
+        a.hidden = directMenu || fullPad;
         if (!self.loggedControls || self.levelControlsVisible != inLevel) {
             if (self.levelControlsVisible && !inLevel) [a cancelInput];
             self.loggedControls = YES;
             self.levelControlsVisible = inLevel;
-            for (NSUInteger i = 0; i < 4; ++i) self.buttons[i].appearanceHidden = !inLevel;
+            for (NSUInteger i = 0; i < 4; ++i) self.buttons[i].appearanceHidden = !inLevel && !fullPad;
             if (getenv("RH_MENU_TRACE")) fprintf(stderr, "Touch level controls: %s (pointer mode %d, scene layout %d, extra %#x)\n", inLevel ? "shown" : "hidden", self.pointerMode, ss_touch_layout(ss_touch_left_get()), ss_touch_extra(ss_touch_left_get()));
         }
         unsigned directions = ss_touch_first(hint);
@@ -1050,6 +1214,13 @@ static void *runGame(void *unused) {
         if (x.hidden == showX && getenv("RH_MENU_TRACE")) fprintf(stderr, "Touch X: %s\n", showX ? "shown" : "hidden");
         y.hidden = !showY;
         x.hidden = !showX;
+        if (fullPad) {
+            self.leftZone.hidden = self.singleLeftZone.hidden = YES;
+            for (NSUInteger i = 0; i < 4; ++i) self.buttons[i].hidden = NO;
+            y.bit = 1ull << 3;
+            y.hidden = x.hidden = NO;
+        }
+        for (NSUInteger i = 9; i < self.buttons.count; ++i) self.buttons[i].hidden = !fullPad || self.loadingScreen;   /* A, ZR */
         /* A loading screen hides the visible controls. The transparent A area stays. */
         [self noteLoadingScreen:controls == SS_CONTROLS_HIDE];
         if (self.loadingScreen) {
@@ -1136,13 +1307,21 @@ static void *runGame(void *unused) {
 /* Put a dark circle behind each visible glass control. */
 - (void)updateDimming {
     CGMutablePathRef path = CGPathCreateMutable();
-    NSMutableArray<UIView *> *views = [NSMutableArray arrayWithObjects:self.dpad, self.backButton, self.skipButton, self.padToggle, nil];
+    NSMutableArray<UIView *> *views = [NSMutableArray array];
+    if (self.dpad) [views addObject:self.dpad];
+    if (self.backButton) [views addObject:self.backButton];
+    if (self.skipButton) [views addObject:self.skipButton];
+    if (self.padToggle) [views addObject:self.padToggle];
     [views addObjectsFromArray:self.buttons];
     for (UIView *view in views) {
         BOOL glass = ![view isKindOfClass:PadButton.class] || ((PadButton *)view).glassShown;
-        if (!view.hidden && glass) {   /* a circle or a capsule */
-            CGFloat radius = fmin(view.frame.size.width, view.frame.size.height) / 2;
-            CGPathAddRoundedRect(path, NULL, view.frame, radius, radius);
+        if (!view.hidden && glass) {   /* a circle, a capsule, or the transformed rectangle of a shaped button */
+            BOOL shaped = [view isKindOfClass:PadButton.class] && ((PadButton *)view).shape != PadShapeRound;
+            CGSize size = view.bounds.size;
+            CGFloat radius = shaped ? 10 : fmin(size.width, size.height) / 2;
+            CGAffineTransform place = CGAffineTransformMakeTranslation(view.center.x, view.center.y);
+            place = CGAffineTransformConcat(CGAffineTransformTranslate(view.transform, -size.width / 2, -size.height / 2), place);
+            CGPathAddRoundedRect(path, &place, view.bounds, radius, radius);
         }
     }
     if (!CGPathEqualToPath(path, self.dimming.path)) {
@@ -1159,6 +1338,7 @@ static void *runGame(void *unused) {
     ss_display_set_view(size.width, size.height);
     ss_display_size render = ss_display_resolution(720);
     self.metalView.frame = self.view.bounds;
+    self.healthBars.frame = self.view.bounds;
     self.pointerView.frame = self.view.bounds;
     gameLayer.drawableSize = CGSizeMake(render.width, render.height);
     if ([[NSBundle.mainBundle objectForInfoDictionaryKey:@"TouchableNativeDrawable"] boolValue]) {
@@ -1185,8 +1365,10 @@ static void *runGame(void *unused) {
         CGFloat lx = bar >= 52 ? bar / 2 : left + 30;
         CGFloat rx = bar >= 52 ? size.width - bar / 2 : right - 30;
         CGFloat by = MAX(safe.top + 30, 48);
+        CGFloat fx = right - 74;   /* the face buttons of the full controller mirror the D-pad */
         CGPoint centers[] = {{cx - d, cy}, {cx, cy - d}, {cx + d, cy}, {cx, cy + d},
-                             {lx, by}, {rx, by + 56}, {rx, by}, {lx, by + 56}, {lx, by + 112}};
+                             {lx, by}, {rx, by + 56}, {rx, by}, {lx, by + 56}, {lx, by + 112},
+                             {fx + d, cy}, {fx + d / 2, cy - 2 * d - 8}};
         if (self.verticalBars) {
             CGFloat topY = MAX(safe.top + 22, 22);
             topY = MIN(topY, game.origin.y / 2);
@@ -1197,12 +1379,19 @@ static void *runGame(void *unused) {
             centers[5] = (CGPoint){rx - pair, topY}; /* - */
             centers[6] = (CGPoint){rx, topY};        /* + */
         }
+        if (self.fullPad) {
+            /* The full controller: A, B, X, and Y in a diamond at the lower right, and ZR above A and X. */
+            centers[4] = (CGPoint){fx, cy + d};       /* B */
+            centers[7] = (CGPoint){fx - d, cy};       /* Y */
+            centers[8] = (CGPoint){fx, cy - d};       /* X */
+        }
         self.glassLayer.frame = self.view.bounds;
         for (NSUInteger i = 0; i < self.buttons.count; ++i) {
-            CGFloat s = i < 4 ? 50 : 44;
+            BOOL face = self.fullPad && (i == 4 || i >= 7);
+            CGFloat s = i < 4 || face ? 50 : 44, w = i == 10 ? 64 : s;
             PadButton *button = self.buttons[i];
-            button.frame = CGRectMake(centers[i].x - s / 2, centers[i].y - s / 2, s, s);
-            if (i >= 4) button.appearanceHidden = !self.sideControlsFit;
+            button.frame = CGRectMake(centers[i].x - w / 2, centers[i].y - s / 2, w, s);
+            if (i >= 4) button.appearanceHidden = !self.sideControlsFit && !face;
         }
         [self updateDimming];
         if (getenv("RH_MENU_TRACE")) fprintf(stderr, "Touch side bars: width %.1f B %s Y %s X %s minus %s plus %s; A area %s\n", (double)bar,
@@ -1227,8 +1416,10 @@ static void *runGame(void *unused) {
     for (NSUInteger i = 0; i < self.buttons.count && i < SS_PAD_BUTTONS; ++i) {
         ss_pad_circle c = pad.buttons[i];
         PadButton *button = self.buttons[i];
-        CGFloat w = ss_pad_width(c);   /* ZL, L, R, and ZR are capsules */
-        button.frame = CGRectMake(c.x - w / 2, c.y - c.size / 2, w, c.size);
+        CGFloat w = ss_pad_width(c), h = c.size;   /* capsules and circles; ZL, ZR, and R are shaped */
+        if (button.shape == PadShapeDiamond) w = h = c.size / M_SQRT2;   /* the layout circle is around the diamond */
+        if (button.shape != PadShapeRound) [button placeAt:CGPointMake(c.x, c.y) size:CGSizeMake(w, h)];
+        else button.frame = CGRectMake(c.x - w / 2, c.y - h / 2, w, h);
         /* The zoomed map moves Y above A at the left edge, and X above B at the right edge. The edges
            are those of − and +. A and B keep the height of B. The upper button is just clear of the
            lower button's touch area. */
@@ -1244,7 +1435,17 @@ static void *runGame(void *unused) {
         button.hitMargin = pad.hit_margin;
         if (titleSize != self.titleSize) {
             UIButtonConfiguration *config = button.configuration;
-            config.attributedTitle = [[NSAttributedString alloc] initWithString:button.accessibilityLabel attributes:@{NSFontAttributeName: font}];
+            if (i == SS_PAD_L) {   /* L opens the map. It shows an upright map symbol in its diamond. */
+                config.attributedTitle = nil;
+                config.image = nil;
+                UIImageSymbolConfiguration *symbol = [UIImageSymbolConfiguration configurationWithPointSize:titleSize * 0.85 weight:UIImageSymbolWeightSemibold];
+                [button setCaptionSymbol:[UIImage systemImageNamed:@"map.fill" withConfiguration:symbol]];
+            } else if (button.shape != PadShapeRound) {   /* the caption keeps the title upright */
+                config.attributedTitle = nil;
+                [button setCaptionText:button.accessibilityLabel font:font];
+            } else {
+                config.attributedTitle = [[NSAttributedString alloc] initWithString:button.accessibilityLabel attributes:@{NSFontAttributeName: font}];
+            }
             button.configuration = config;
         }
     }
@@ -1323,7 +1524,7 @@ static void *runGame(void *unused) {
     if (gameStarted) { dm_focus_set(0); dm_audio_suspend(1); dm_gfx_suspend(1); }
 }
 - (void)sceneDidBecomeActive:(UIScene *)scene {
-    if (gameStarted) { dm_gfx_suspend(0); dm_audio_suspend(0); dm_focus_set(1); }
+    if (gameStarted) { dm_gfx_suspend(0); dm_audio_suspend(0); dm_focus_set(1); followAudioRoute("app active"); }
 }
 @end
 
@@ -1331,6 +1532,8 @@ static void *runGame(void *unused) {
 @end
 @implementation GameDelegate
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)options {
+    tvModeAudioRoute = [[NSBundle.mainBundle objectForInfoDictionaryKey:@"TouchableTVModeAudioRoute"] boolValue];
+    BOOL launchModeSet = getenv("DM_OPMODE") != NULL;   /* devicectl or Xcode launch environment */
     NSFileManager *fm = NSFileManager.defaultManager;
     NSString *documents = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
     NSString *bundle = NSBundle.mainBundle.resourcePath;
@@ -1385,6 +1588,22 @@ static void *runGame(void *unused) {
     for (NSString *key in environment) {
         setenv(key.UTF8String, [environment[key] UTF8String], 1);
     }
+    /* Player choices on the app page in the Settings app replace the profile values. Only the values
+       that the game lists in TouchablePlayerSettings are used. "default" keeps the profile value. */
+    NSDictionary *playerSettings = [NSBundle.mainBundle objectForInfoDictionaryKey:@"TouchablePlayerSettings"];
+    if ([playerSettings isKindOfClass:NSDictionary.class]) {
+        NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+        NSString *height = [defaults stringForKey:@"TouchableRenderHeight"], *rate = [defaults stringForKey:@"TouchableDisplayHz"];
+        NSArray *heights = playerSettings[@"RenderHeights"], *rates = playerSettings[@"DisplayHz"];
+        if (height.integerValue && [heights isKindOfClass:NSArray.class] && [heights containsObject:@(height.integerValue)])
+            setenv("SS_RENDER_HEIGHT", height.UTF8String, 1);
+        if (rate.integerValue && [rates isKindOfClass:NSArray.class] && [rates containsObject:@(rate.integerValue)])
+            setenv("SS_DISPLAY_HZ", rate.UTF8String, 1);
+        if ([playerSettings[@"HealthBars"] boolValue] && [defaults boolForKey:@"TouchableHealthBars"]) setenv("SS_HEALTH_BARS", "1", 1);
+        fprintf(stderr, "Player settings: render height %s (SS_RENDER_HEIGHT=%s), refresh rate %s (SS_DISPLAY_HZ=%s), health bars %s\n",
+                (height ?: @"default").UTF8String, getenv("SS_RENDER_HEIGHT") ?: "720",
+                (rate ?: @"default").UTF8String, getenv("SS_DISPLAY_HZ") ?: "60", getenv("SS_HEALTH_BARS") ? "on" : "off");
+    }
     /* The game starts at 60 Hz. The input display link raises the rate when the screen runs at 120 Hz. */
     const char *displayHz = getenv("SS_DISPLAY_HZ");
     if (displayHz && atoi(displayHz) == 120) displayHzWanted = 120;
@@ -1394,6 +1613,15 @@ static void *runGame(void *unused) {
     NSNumber *ioBuffer = [NSBundle.mainBundle objectForInfoDictionaryKey:@"TouchableAudioIOBufferDuration"];
     if (ioBuffer) [audio setPreferredIOBufferDuration:ioBuffer.doubleValue error:nil];
     [audio setActive:YES error:nil];
+    if (tvModeAudioRoute) {
+        /* The start mode comes from the audio output. A launch environment (DM_OPMODE from devicectl) wins for tests. */
+        AVAudioSessionRouteDescription *route = audio.currentRoute;
+        if (!launchModeSet) setenv("DM_OPMODE", audioRouteIsTV(route) ? "1" : "0", 1);
+        fprintf(stderr, "TV mode: launch %s, audio output %s\n", atoi(getenv("DM_OPMODE") ?: "0") ? "TV" : "handheld", audioRouteName(route).UTF8String);
+        [[NSNotificationCenter defaultCenter] addObserverForName:AVAudioSessionRouteChangeNotification object:audio queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
+            followAudioRoute("route change");
+        }];
+    }
     ss_haptics_ios_init();
     [[NSNotificationCenter defaultCenter] addObserverForName:AVAudioSessionInterruptionNotification object:audio queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
         BOOL paused = [note.userInfo[AVAudioSessionInterruptionTypeKey] unsignedIntegerValue] == AVAudioSessionInterruptionTypeBegan;

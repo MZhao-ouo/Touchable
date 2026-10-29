@@ -28,7 +28,7 @@ static void ss_clear_attachment(const p_clear_color *color, const p_clear_ds *de
             "float2 p = float2((i << 1) & 2, i & 2) * 2.0 - 1.0; return float4(p, c.depth, 1); }\n"
             "fragment float4 ss_clear_fs(constant C &c [[buffer(0)]]) { return c.color; }\n";
         NSError *error = nil;
-        library = [g_dev newLibraryWithSource:source options:nil error:&error];
+        library = [g_dev newLibraryWithSource:source options:nvn_msl_options() error:&error];
         if (!library) MDIE("Clear shader: %s", error.localizedDescription.UTF8String);
         pipelines = [NSMutableDictionary dictionary]; states = [NSMutableDictionary dictionary];
     }
@@ -77,10 +77,10 @@ static void ss_clear_attachment(const p_clear_color *color, const p_clear_ds *de
     MTL4RenderPassDescriptor *pass = [MTL4RenderPassDescriptor new];
     MTLRenderPassAttachmentDescriptor *attachment = color ? pass.colorAttachments[0] :
         has_depth ? pass.depthAttachment : pass.stencilAttachment;
-    attach(attachment, target, view, has_view);
+    attach(attachment, target, view, has_view, 0);   /* the clear pipeline uses the base format */
     attachment.loadAction = MTLLoadActionLoad; attachment.storeAction = MTLStoreActionStore;
     if (has_depth && has_stencil) {
-        attach(pass.stencilAttachment, target, view, has_view);
+        attach(pass.stencilAttachment, target, view, has_view, 0);
         pass.stencilAttachment.loadAction = MTLLoadActionLoad;
         pass.stencilAttachment.storeAction = MTLStoreActionStore;
     }

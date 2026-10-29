@@ -1,5 +1,94 @@
 **Silksong Switch → iPhone / iPad port workspace**
 
+
+
+
+
+
+## 2026-10-26: Enemy health bars (build 36, installed on the iPhone, no device test yet)
+
+User request: "build the health bars first" (GitHub issue #10).
+
+- `runtime/ss_enemy_bars.c` hooks `HealthManager.Update` and publishes a bar for each hit enemy (remaining hp / initHp) at the top of its collider. `App.m` draws the bars above the game picture.
+- Settings app → Silksong → Gameplay → Enemy health bars (off by default). Takes effect at the next start.
+- Mac host: the projection matches Hornet's position in screenshots; no fight was tested. Build 36: `IPA/silksong/Silksong-build36-20261026-012358-d465d9.ipa`.
+- See [the health bar record](../../../.touchable/work/silksong/reports/health-bars-20261026/README.md).
+
+## 2026-10-25: Render resolution and refresh rate on the app page in the Settings app (build 35)
+
+User request: "Add a option in settings to let player choose render resolution and refresh rate."
+
+- `game.json` `ios.player_settings` lists the choices: render height 720, 900, 1080 or 1440 lines, and 60 or 120 Hz. "Default" keeps the profile values (1080 lines, 120 Hz).
+- `internal/tools/prepare_ios.py` writes `Settings.bundle` (English and Simplified Chinese) and `TouchablePlayerSettings` in Info.plist. `App.m` reads the choices at launch and logs a `Player settings:` line. A change takes effect at the next game start.
+- The picture is at most 1920 pixels wide, so an iPhone (2.17:1) uses at most 882 lines; 1080 and 1440 give the same result there. An iPad mini uses up to 1280 lines.
+- Build 35 (`IPA/silksong/Silksong-build35-20261025-171151-96fbc1.ipa`) is installed on the iPhone. iPhone test: 900p at 60 Hz dropped 0.2 % of frames (steady 60 fps); 720p at 120 Hz dropped 14.9 % (default 882 lines at 120 Hz in build 34: 27.1 %), GPU p50 6.3 ms. It contains the page; it also has the D-pad height change and the upstream graphics merge. Python tests: 59 passed.
+
+## 2026-10-25: D-pad at the height of the face buttons (source change, no build)
+
+User request: "Align D-PAD and ABXY, make sure they are on same height".
+
+- `internal/platform/ios/TouchLayout.h`: the D-pad center now has the height of the face-button center (Y and A). Before, it kept the build 17 height, 26 points lower on a phone. iPhone 16 Pro Max: D-pad and A at y 305. iPad mini: 205 points above the lower edge (174 before).
+- `internal/tests/common/test_touch_layout.c`: checks the equal height; PASS on 11 screen sizes.
+
+## 2026-10-24: Upstream graphics translation thread and renderer optimizations (build 34)
+
+User request: "Inspect upstream repo find if there are good performance optimization which can be used in Touchable project. Use them and optimize our project's performance."
+
+- The shared Metal layer now includes the newer upstream graphics code (to upstream `195ae11`): command replay and Metal encoding run on a separate real-time thread (`nvn-translate`), unchanged render state is not sent again, memory pools become resident only on first GPU use, and fewer autorelease operations occur for each draw.
+- The texture object still fits Silksong's 128 bytes: `magic` is 8 bits and the pool offset 32 bits in the Touchable build.
+- Mac host: menus and gameplay render the same as before; the present thread uses 0.23 ms of CPU for each frame, and translation (0.35 ms) runs on the new thread. On the iPhone, build 32 spent 1.4 to 1.9 ms of each frame on translation on the game thread.
+- Build 34 IPA: `IPA/silksong/Silksong-build34-20261024-174420-de2b5f.ipa`. Installed on the iPhone. iPhone test (different areas from the build 32 log): dropped frames 27.1 % (build 32: 32.6 %), frame time p95 10.9 ms (12.1 ms), p50 9.5 ms (8.9 ms). The game thread is no longer the limit; at 120 Hz the GPU is (GPU p50 about 9 ms against an 8.33 ms budget).
+- See [the upstream graphics merge record](../../../.touchable/work/silksong/reports/upstream-gfx-merge-20261024/README.md).
+
+## 2026-10-23: Select, then confirm on the save select (build 33)
+
+User request: "There are still a lot of double tap to confirm logic, change all of them to select-then-confirm" (also for Silksong).
+
+- `runtime/ss_touch_ui.c`: on the save select, a tap on the item that was already selected clicks it. A tap on another item only selects it. Before, an already selected item needed two taps. This applies to the slots, the restore points, the clear button, and Back.
+- The inventory already worked this way (a tap on the selected item is A). No other screen used two taps.
+- Mac host test on a copy of the 2026-10-23 phone save (`SS_TOUCH_TRACE=1`): with slot 2 selected, one tap on slot 2 loaded it (`game=4`). In a second run, a tap on slot 3 selected it, a tap on slot 2 selected it, and a second tap on slot 2 loaded it. Evidence: `.touchable/work/silksong/reports/select-confirm-20261023/`.
+- Build 33 (IPA `Silksong-build33-20261023-153701-ae1fc9.ipa`, SHA-256 `c1ba7fa6dfe82349205d0cd880059fc0fe89278650f2df6033c6968ae5377a3e`) is installed on the iPhone and the iPad mini (2026-10-23). On the iPad, the first try could not read the device (locked) and the second lost the connection; the third try succeeded. Not tested on a device.
+
+## 2026-10-23: Controls nearer the side edges, and a faster press response (build 32)
+
+User request: "Move the virtual buttons closer to the left and right edges. Make button interaction animation faster".
+
+- `internal/platform/ios/TouchLayout.h`: on a phone the controls start at the edge of the safe area (12 points inside it before); on a tablet 8 points from it (16 before). iPhone 16 Pro Max: D-pad 12 points left, right group 8 points right.
+- `internal/platform/ios/App.m`: the glass press look ends at once when the finger lifts (0.02 s instead of 0.20 s, measured from screen recordings). Layer speed did not affect the system glass response. This applies to the glass buttons of both games.
+- See [the edges and press record](../../../.touchable/work/silksong/reports/edges-fast-press-20261023/README.md).
+- Build 32 (`IPA/silksong/Silksong-build32-20261023-141808-0d65ac.ipa`) is installed on the iPhone and the iPad mini. It also has the map button aligned with R. The launcher backed up the saves before each install. No game test on a device yet.
+
+## 2026-10-23: Right-side layout from the user's sketch (source change, no build)
+
+User request: "I want a layout looks like this" with a sketch. ZL and ZR are slanted buttons below and outside the X, Y, A, B diamond, lower than B. R is a diamond shape above and right of A. After "Make map button also diamond", the map button (L) below + is a diamond too, and it has the horizontal center of R ("Align horizontal center of Map button and R button"). A shear or rotation transform shapes the glass, and the titles stay upright. The diamond moves left 18 points on the iPhone 16 Pro Max so that ZR fits. This replaces the earlier ZL and ZR beside B and the round R. Layout test (11 sizes) and iOS Simulator tests passed. See [the sketch layout record](../../../.touchable/work/silksong/reports/sketch-layout-20261023/README.md).
+
+## 2026-10-23: ZR slides like the face buttons (source change, no build)
+
+User request: "Make ZR button also slideable: when pressing ZR, it can slide to other buttons".
+
+- `internal/platform/ios/App.m`: ZR is a sliding button. ZR stays pressed until the finger lifts, and a slide onto A, B, X, or Y also presses that button. A slide from a face button onto ZR presses ZR. The slide mark has the capsule shape of ZR.
+- Real-touch iOS Simulator test: ZR → B → A → ZR gives ZR, B+ZR, A+ZR, ZR, and none at the lift. See [the ZR slide record](../../../.touchable/work/silksong/reports/zr-slide-20261023/README.md).
+
+## 2026-10-23: L is a round map button below +; ZL and ZR below ABXY; R on the right (source change, no build)
+
+User request: "Move L button to most right side, below + button. Use a round shape. Use a map icon".
+
+- `internal/platform/ios/TouchLayout.h`: L is a round button of the size of +, below + at the right edge. A phone up to 390 points of usable height puts it next to +. The pad toggle moved into the row of +, left of + and L.
+- `internal/platform/ios/App.m`: L shows the SF Symbol `map.fill`.
+- Follow-up requests "Move ZL to right side, to the lower left of Y and B", then "Slightly move AXBY panel up and Move ZL and ZR to bottom of ABXY, use capsule shape. Move R button to right side.": ZL and ZR are low capsules (34 points high on a phone, after "make ZL and ZR button height lower") beside B, in its row (after "Make ZL and ZR besides B not below"). The diamond rises 12 points and moves left so that ZR fits: about 48 points on the iPhone 16 Pro Max, 53 points on the iPad mini. R is on the right, above A, and round after the follow-up "Use round shape for R". The D-pad does not move.
+- The layout test (11 sizes) and an iOS Simulator test passed. See [the L button record](../../../.touchable/work/silksong/reports/map-l-button-20261023/README.md).
+
+## 2026-10-23: App name follows the language
+
+The home screen name now follows the language of the device. The names are the official titles from the game's `control.nacp` (`internal/tools/game_titles.py`), stored in `ios.display_names` in `game.json`.
+- Silksong: "Hollow Knight: Silksong" for all languages except Simplified Chinese ("空洞骑士 丝之歌"). The game has no Traditional Chinese title.
+The default name is English. The Files app folder shows the same localized name; iOS has no separate setting for it. The product name, the save folders, and the IPA names stay English.
+Checked in the iOS Simulator (Simplified Chinese) with a test app that uses the generated names: the home screen and the Files folder show the Chinese name. The change applies with the next app build.
+
+## 2026-10-21: Shader libraries for iOS 26 (source and shader change, no build)
+
+On iOS 26 the game screen stayed black, with working audio and touch controls. The shader libraries targeted iOS 27, the version of the Xcode 27 SDK, and iOS 26 refused to load them. `build_shaders.py` now compiles for the manifest deployment targets (iOS 26.0, macOS 26.0) and checks each library header. `prepare_ios.py` refuses newer libraries. Runtime MSL compiles with Metal 4.0. A rejected library falls back to its `.metal` source. The iOS and host builds treat an unguarded new API as an error. The new chain is `a9bf9ac9ed21`. Mac host test, graphics tests, and an unsigned iOS build passed. No iOS 26 device was available, so the fix is not confirmed on iOS 26. Evidence: `.touchable/work/silksong/reports/ios26-metal-target-20261021/`.
+
 ## 2026-10-20: Build 28 installed on the iPhone and the iPad mini (wider view removed)
 
 User request: "undo wider view and install". Build 28 is build 27 without the camera zoom; the map changes stay. IPA: `IPA/silksong/Silksong-build28-20261020-220739-0b1591.ipa`. Silksong was closed on both devices.

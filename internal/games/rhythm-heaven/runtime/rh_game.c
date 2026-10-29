@@ -14,7 +14,7 @@
 static pthread_mutex_t touch_lock = PTHREAD_MUTEX_INITIALIZER;
 static rh_touch_state touch_state;
 static void rh_fs_open(const char *path) {
-    rh_touch_hint hint;
+    rh_touch_hint hint = {SS_TOUCH_MENU, 0, 0, 0};
     pthread_mutex_lock(&touch_lock);
     int loading = rh_touch_loading(&touch_state, path);
     int changed = rh_touch_path(&touch_state, path, &hint);

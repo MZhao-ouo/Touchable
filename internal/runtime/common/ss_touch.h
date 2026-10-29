@@ -19,6 +19,7 @@ enum {
     SS_TOUCH_ONE = 1,    /* the whole area presses `first` */
     SS_TOUCH_TWO = 2,    /* the left part presses `first`, the right part presses `second` */
     SS_TOUCH_MENU = 3,   /* menus: the phone shows a small D-pad instead of the area */
+    SS_TOUCH_PAD = 4,    /* a full controller: the phone shows the D-pad and the A, B, X, Y, and ZR buttons, and no touch area */
 };
 
 /* Controls that the phone shows in a level in addition to the left area. */
@@ -32,6 +33,9 @@ enum {
 void ss_touch_left_set(int layout, int first, int second, int extra);
 /* Packed hint: layout | first << 8 | second << 16 | extra << 24 | change count << 32. Starts as SS_TOUCH_MENU. */
 uint64_t ss_touch_left_get(void);
+/* Called by the game adapter on any thread. The game sees the buttons in `mask` (NpadButton bits) as one
+   short press, the same as a touch tap. A tap on a game object can so use the game's own input checks. */
+void ss_touch_press(uint64_t mask);
 
 static inline int ss_touch_layout(uint64_t hint) { return (int)(hint & 0xff); }
 static inline int ss_touch_first(uint64_t hint) { return (int)(hint >> 8 & 0xff); }

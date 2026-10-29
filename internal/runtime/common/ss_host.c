@@ -114,6 +114,24 @@ static void *input_file(void *argument) {
         usleep(10000);
     }
 }
+/* SS_OPMODE_FILE: a test file with 0 (handheld) or 1 (TV). A change switches the mode live. */
+static void *opmode_file(void *argument) {
+    const char *path = argument;
+    void dm_opmode_set(int mode);
+    int previous = -1;
+    for (;;) {
+        FILE *file = fopen(path, "r");
+        int mode;
+        if (file) {
+            if (fscanf(file, "%d", &mode) == 1 && mode != previous) {
+                if (previous >= 0) dm_opmode_set(mode);
+                previous = mode;
+            }
+            fclose(file);
+        }
+        usleep(100000);
+    }
+}
 int main(int argc, char **argv) {
     if (argc != 2) { fprintf(stderr, "Usage: touchable-host MODULE_DIRECTORY\n"); return 2; }
     const char *view = getenv("SS_VIEW_SIZE");
@@ -121,6 +139,8 @@ int main(int argc, char **argv) {
     if (view && sscanf(view, "%lfx%lf", &width, &height) == 2) ss_display_set_view(width, height);
     const char *path = getenv("SS_INPUT_FILE");
     if (path) { pthread_t thread; if (pthread_create(&thread, NULL, input_file, (void *)path)) die("Cannot start test input"); pthread_detach(thread); }
+    const char *mode = getenv("SS_OPMODE_FILE");
+    if (mode) { pthread_t thread; if (pthread_create(&thread, NULL, opmode_file, (void *)mode)) die("Cannot start test mode input"); pthread_detach(thread); }
     return ss_host_run(argv[1]);
 }
 #endif

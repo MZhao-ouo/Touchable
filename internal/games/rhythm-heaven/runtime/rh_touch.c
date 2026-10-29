@@ -14,12 +14,15 @@
  * BeatSpell reads graph/beatspell/. Its battles step with B or down, cast with A or right, and do a
  * backflip with left or Y (mesg/CN/CNzh/beatspell_common.msbt). Its map and lists select with up
  * and down, open the items with X and open the map with Y. The left area presses B, the most
- * frequent button after A. The phone also shows the small D-pad and X and Y buttons there. */
+ * frequent button after A. The phone also shows the small D-pad and X and Y buttons there.
+ *
+ * Drum Lessons read graph/scene/drummer/. A lesson uses almost every button, so the phone shows a full
+ * controller there and no touch area. The Rhythm Toys take taps on their items (rh_menu.c). */
 #include "rh_touch.h"
 #include "ss_touch.h"
 #include <string.h>
 
-enum { K_A = 1, K_B = 2, K_LEFT = 4, K_UP = 8, K_RIGHT = 16, K_DOWN = 32, K_MANY = 64, K_SPELL = 128 };
+enum { K_A = 1, K_B = 2, K_LEFT = 4, K_UP = 8, K_RIGHT = 16, K_DOWN = 32, K_MANY = 64, K_SPELL = 128, K_PAD = 256 };
 typedef struct { const char *name; unsigned keys; } scene_keys;
 static const scene_keys scenes[] = {
     {"birds", K_A}, {"block", K_A}, {"cooking", K_A}, {"flydisc", K_A}, {"fugu", K_A}, {"grasp", K_A},
@@ -37,8 +40,10 @@ static const scene_keys scenes[] = {
     {"dancer", K_A | K_LEFT | K_RIGHT}, {"master", K_A | K_LEFT | K_RIGHT},
     {"foot_race", K_A | K_B}, {"quiz", K_A | K_B},
     /* More buttons than two touch areas hold, or no prompts to read: the left half stays a D-pad. */
-    {"audio_tile", K_MANY}, {"drummer", K_MANY}, {"konkon", K_MANY}, {"nervous", K_MANY},
+    {"audio_tile", K_MANY}, {"konkon", K_MANY}, {"nervous", K_MANY},
     {"doc_comic", K_MANY}, {"doc_text", K_MANY},
+    /* Drum Lessons use A, B, X, Y, the four directions, ZR, and - (mesg/CN/CNzh/stage_drummer_00.msbt). */
+    {"drummer", K_PAD},
     {"remix", 0},   /* adds no keys itself; its scenes do */
 };
 
@@ -51,6 +56,7 @@ static unsigned keys_of(const char *name, size_t length) {
 static rh_touch_hint hint_of(const rh_touch_state *state) {
     rh_touch_hint dpad = {SS_TOUCH_DPAD, 0, 0, 0};
     if (!state->active) return (rh_touch_hint){SS_TOUCH_MENU, 0, 0, 0};
+    if (state->keys & K_PAD) return (rh_touch_hint){SS_TOUCH_PAD, 0, 0, 0};
     if (state->keys & K_SPELL)
         return (rh_touch_hint){SS_TOUCH_ONE, SS_BUTTON_B, 0, SS_TOUCH_SHOW_DPAD | SS_TOUCH_SHOW_X | SS_TOUCH_SHOW_Y};
     if (state->keys & K_MANY) return dpad;

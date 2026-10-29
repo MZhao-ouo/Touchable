@@ -4,7 +4,7 @@
   "display_name": "节奏天国",
   "product_name": "RhythmHeaven",
   "bundle_id": "com.mmmz.TouchableRhythmHeaven",
-  "build_version": 35,
+  "build_version": 40,
   "title_id": "0100d9f01d474000",
   "profile": "profile.json",
   "status": "in-progress",
@@ -34,6 +34,7 @@
     "runtime/common/ss_net.c",
     "runtime/common/ss_input.c",
     "runtime/common/ss_pointer.c",
+    "runtime/common/ss_health_bars.c",
     "runtime/common/ss_haptics.c",
     "runtime/common/ss_display.c",
     "runtime/common/ss_shader_capture.c",
@@ -63,10 +64,26 @@
     "shader_build": "nvn"
   },
   "ios": {
+    "display_names": {
+      "en": "Rhythm Heaven Groove",
+      "en-GB": "Rhythm Paradise Groove",
+      "ja": "リズム天国 ミラクルスターズ",
+      "fr": "Rhythm Paradise Groove",
+      "fr-CA": "Rhythm Heaven Groove",
+      "de": "Rhythm Paradise Groove",
+      "es": "Rhythm Paradise Groove",
+      "es-419": "Rhythm Heaven Groove",
+      "it": "Rhythm Paradise Groove",
+      "nl": "Rhythm Paradise Groove",
+      "ko": "리듬 천국 미라클 스타즈",
+      "zh-Hant": "節奏天國 奇蹟之星",
+      "zh-Hans": "节奏天国 奇迹之星"
+    },
     "deployment_target": "26.0",
     "touch_layout": "rhythm",
     "native_drawable": true,
     "controller_haptics": true,
+    "tv_mode_audio_route": true,
     "audio_io_buffer_seconds": 0.005,
     "localizations": [
       "en",

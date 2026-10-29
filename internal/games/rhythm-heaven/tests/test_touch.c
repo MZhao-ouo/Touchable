@@ -71,9 +71,12 @@ int main(void) {
     open_path("data:/graph/prologue/wiper/type_00/prologue.spr");
     expect(SS_TOUCH_ONE, SS_BUTTON_LEFT, 0);
 
-    /* Modes with many buttons and unknown scenes keep the D-pad. */
+    /* Drum Lessons show the full controller. Modes with many buttons and unknown scenes keep the D-pad. */
     open_path("data:/graph/scene/drummer/type_00/main.spr");
     open_path("data:/graph/prologue/drummer/type_00/prologue.spr");
+    expect(SS_TOUCH_PAD, 0, 0);
+    open_path("data:/graph/scene/audio_tile/type_00/main.spr");
+    open_path("data:/graph/prologue/audio_tile/type_00/prologue.spr");
     expect(SS_TOUCH_DPAD, 0, 0);
     open_path("data:/graph/prologue/new_game/type_00/prologue.spr");
     expect(SS_TOUCH_DPAD, 0, 0);

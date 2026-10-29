@@ -11,6 +11,7 @@ void hle_bind_system_event(void *event, int auto_clear) {
 }
 void hle_signal_system_event(void *event) { (void)event; ++signals; }
 void nvn_present_hz(int hz) { (void)hz; }
+void ss_input_style_changed(void) {}
 uint64_t guest_ns(void) { return 0; }
 /* Capture registrations without Mach-O section traversal. ASan inserts
    redzones between section records, so they are not a contiguous C array. */

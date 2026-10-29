@@ -379,28 +379,28 @@ static void slider_drag_hook(void *slider, void *event, const void *method) {
    selects the item under the finger. A drag, for example on a slider, keeps the selection.
    A press on an empty area clears the selection. The menu item then selects itself again
    at the end of the frame (MenuSelectable). */
-/* A click on the save select loads or changes a save. There a touch needs two taps on the same
-   item: the first tap only selects the item. Its release goes away from the items, as a cancel. */
-static void *armed;   /* the click target of the first tap */
+/* A click on the save select loads or changes a save. There a touch follows select, then confirm:
+   a tap on the save that was already selected clicks it. A tap on another save only selects it;
+   its release goes away from the items, as a cancel. */
+static void *selected_before;   /* the selected item when the finger went down */
 
 static void confirm_release(void *module, int confirm) {
-    if (!confirm) { armed = NULL; return; }
+    if (!confirm) return;
     if (!mouse.released || (mouse.position.x == outside.x && mouse.position.y == outside.y)) return;
     void *data = last_pointer(module, -1, NULL);
     void *press = data ? read_pointer(data, POINTER_PRESS) : NULL;
     char name[64];
-    if (!alive(press)) { armed = NULL; return; }
-    if (press == armed) {
-        armed = NULL;
-        LOG("TOUCH UI save select: second tap clicks %s", name_of(press, name, sizeof name));
+    if (!alive(press)) return;
+    if (press == selected_before) {
+        LOG("TOUCH UI save select: tap on the selected item clicks %s", name_of(press, name, sizeof name));
         return;
     }
-    armed = press;
     mouse.position = outside;
-    LOG("TOUCH UI save select: first tap selects %s", name_of(press, name, sizeof name));
+    LOG("TOUCH UI save select: tap selects %s", name_of(press, name, sizeof name));
 }
 
 static void process_menu_touch(void *module, int confirm) {
+    if (mouse.pressed) selected_before = read_pointer(read_pointer(module, MODULE_EVENT_SYSTEM), EVENT_SYSTEM_SELECTED);
     confirm_release(module, confirm);
     uint8_t *hover = (uint8_t *)module + MODULE_HOVER_SELECT, hovering = *hover;
     *hover = mouse.pressed;

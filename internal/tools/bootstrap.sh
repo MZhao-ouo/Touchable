@@ -24,7 +24,8 @@ fetch_source() {
 fetch_source https://github.com/jhaizhou-ops/d2r-mobile.git "$DEPENDENCIES/d2r-mobile" 2eb5758771f110cd53082b999d88d242766610da
 fetch_source https://github.com/SciresM/hactool.git "$DEPENDENCIES/hactool" 1d64a83450e025622f3468c28fc4164dad2c5ef6
 if git -C "$DEPENDENCIES/d2r-mobile" apply --check "$PROJECT_ROOT/patches/d2r-mobile.patch" 2>/dev/null; then
-    git -C "$DEPENDENCIES/d2r-mobile" apply "$PROJECT_ROOT/patches/d2r-mobile.patch"
+    # Mark the new files so that git diff shows them. The launcher compares that diff with the patch.
+    git -C "$DEPENDENCIES/d2r-mobile" apply --intent-to-add "$PROJECT_ROOT/patches/d2r-mobile.patch"
 else
     git -C "$DEPENDENCIES/d2r-mobile" apply --reverse --check "$PROJECT_ROOT/patches/d2r-mobile.patch"
 fi

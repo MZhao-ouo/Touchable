@@ -11,7 +11,6 @@ static uint8_t *base;
 static const module_t *module;
 static int trace;
 static ss_pointer_gesture gesture;
-static rh_map_tap map_tap;
 static int can_drag;
 static uint64_t traced_owner;
 static uint64_t traced_hints;
@@ -93,6 +92,7 @@ static void start_pointer_file(void) {
     static char path[1024];
     if (*name == '/' || !home) snprintf(path, sizeof path, "%s", name);
     else snprintf(path, sizeof path, "%s/%s", home, name);
+    LOG("Pointer file %s", path);
     pthread_t thread;
     if (pthread_create(&thread, NULL, pointer_file, path)) die("Cannot start pointer test input");
     pthread_detach(thread);
@@ -179,26 +179,78 @@ static int list_frame(void *list, int scroll, ss_pointer_frame *frame) {
         frame->scroll = intersect((ss_pointer_rect){960 + ox - width / 2, 540 - oy - (rows + 1) * spacing / 2,
                                                    width, (rows + 1) * spacing}, picture);
     }
+    int slots = scroll ? integer(list, 0x44) : 0;
+    float base_y = 0, ref_x = 0, ref_width = fmaxf(items[0] ? integer(items[0], 0x30) + 48 : 200, 200);
+    int have_rows = 0;
+    if (scroll) {
+        int first_page = slots > 0 && slots < count ? slots : count;
+        for (int i = 0; i < count && !have_rows; ++i) {
+            void *item = items[i];
+            if (!item) continue;
+            void *node = ptr(item, ((uint8_t *)item)[0x28] ? 0x18 : 0x10);
+            if (!sprite(node) || ((uint8_t *)node)[0x84] != 1) continue;
+            float x = 0, y = 0;
+            if (!node_point(ptr(list, 0x70), node, &x, &y)) continue;
+            /* The first page is laid out item by item. The game parks every later
+               item at the same off-page position, but draws it on the next row. */
+            base_y = i < first_page ? y + i * spacing : y;
+            ref_x = x;
+            have_rows = 1;
+        }
+    }
+    int dump = 0;
+    if (trace) {
+        static void *dump_list;
+        static int dump_count, dump_selected, dump_row, dump_slot;
+        int row = integer(list, 0x48);
+        int slot = spacing > 0 ? (int)lroundf(real(list, 0x50) / spacing) : 0;
+        if (list != dump_list || count != dump_count || selected != dump_selected || row != dump_row || slot != dump_slot) {
+            dump = 1; dump_list = list; dump_count = count; dump_selected = selected; dump_row = row; dump_slot = slot;
+            LOG("POINTER dump list %p count %d selected %d row %d slot %d offset %.1f slots %d low %d high %d anchor %.1f %.1f scroll %.1f %.1f %.1fx%.1f",
+                list, count, selected, row, slot, real(list, 0x50), integer(list, 0x44), integer(list, 0x58),
+                integer(list, 0x5c), ox, oy, frame->scroll.x, frame->scroll.y, frame->scroll.width, frame->scroll.height);
+        }
+    }
     for (int i = 0; i < count; ++i) {
         void *item = items[i];
-        if (!item) continue;
-        void *node = ptr(item, ((uint8_t *)item)[0x28] ? 0x18 : 0x10);
+        void *node = NULL;
+        float x = 0, y = 0;
+        int visible = 0, found = 0;
+        if (item) {
+            node = ptr(item, ((uint8_t *)item)[0x28] ? 0x18 : 0x10);
+            visible = sprite(node) && ((uint8_t *)node)[0x84] == 1;
+        }
         /* Long lists retain hidden cloned rows. Their local positions can match
            visible rows. Do not let those clones take a visible row's tap. */
-        if (!sprite(node) || ((uint8_t *)node)[0x84] != 1) continue;
-        float x = 0, y = 0;
-        int found = 0;
-        if (scroll) found = node_point(ptr(list, 0x70), node, &x, &y);
+        if (!visible) {
+            if (dump) LOG("POINTER dump item %d item %p node %p vis 0", i, item, node);
+            continue;
+        }
+        if (scroll && have_rows) {
+            x = ref_x;
+            y = base_y - i * spacing;
+            found = 1;
+        } else if (scroll) found = node_point(ptr(list, 0x70), node, &x, &y);
         else {
             void *root = ptr(owner, 0x40);
             for (int n = 0; root && n < 96 && !found; ++n, root = ptr(root, 0x98)) found = node_point(root, node, &x, &y);
         }
-        if (!found) continue;
-        float width = fmaxf(integer(item, 0x30) + 48, 200);
+        if (!found) {
+            if (dump) LOG("POINTER dump item %d item %p node %p vis 1 not found", i, item, node);
+            continue;
+        }
+        float width = scroll ? ref_width : fmaxf(integer(item, 0x30) + 48, 200);
+        int before = frame->count;
         target(frame, i, x + ox, y + oy, width, scroll ? spacing : 84, i == selected ? SS_POINTER_SELECTED : 0, -1);
+        if (dump) LOG("POINTER dump item %d item %p node %p vis 1 at %.1f %.1f target %d", i, item, node, x, y, frame->count > before);
     }
     trace_frame(frame);
-    return frame->count > 0;
+    /* A long list can scroll past the rows that the game has laid out. Keep the
+       empty menu frame so the phone does not show the fallback A and D-pad
+       areas. Those areas turn a continued drag into a button press. A short
+       menu without targets keeps the fallback, because it may be a menu that
+       this adapter cannot read. */
+    return scroll || frame->count > 0;
 }
 static int list_input(void *list, void *pad, int scroll, uintptr_t original) {
     ss_pointer_frame frame;
@@ -305,7 +357,8 @@ static int map_frame(void *scene, ss_pointer_frame *frame) {
         target(frame, id, ox + col * width, oy + row * height, 160, 150, flags, -1);
     }
     trace_frame(frame);
-    return frame->count > 0;
+    /* Keep an empty map frame so a drag at the edge cannot fall back to a button press. */
+    return 1;
 }
 static void map_focus(void *scene, int col, int row) {
     int old_x = integer(scene, 0x5298), old_y = integer(scene, 0x529c);
@@ -325,11 +378,22 @@ static void map_pan(void *scene, float dx) {
     put_real(scene, 0x52b4, 0); put_real(scene, 0x52b8, 0); put_real(scene, 0x52bc, 1);
     ((void (*)(void *, float, float))(base + 0x4fe260))((uint8_t *)stage + 8, x, real(stage, 0x1c));
 }
+/* The native map command handler (main+0x1d1560) moves the map only in input state 1 and uses the
+   selector in state 2. Other states, for example an unlock transition, ignore input. A touch there
+   could change the selection that the unlock routine then uses (issue #2). */
 static void map_input(void *scene) {
-    if (integer(scene, 0x5288) == 2) {
-        void *selector = ptr(scene, 0x6d68);
-        if (selector) selector_input(selector, ptr(selector, 0x18), scene);
-        map_tap.armed = 0;
+    int state = integer(scene, 0x5288);
+    if (!rh_map_input_ready(state)) {
+        void *selector = state == 2 ? ptr(scene, 0x6d68) : NULL;
+        if (!selector || !selector_input(selector, ptr(selector, 0x18), scene)) {
+            /* An empty menu frame takes the touches, so no fallback button acts. Drop them. */
+            ss_pointer_frame blocked = {.owner = (uintptr_t)scene, .mode = SS_POINTER_MENU};
+            blocked.token = ss_pointer_publish(&blocked);
+            gesture = (ss_pointer_gesture){0};
+            can_drag = 0;
+            ss_pointer_event ignored;
+            while (ss_pointer_take(blocked.token, &ignored)) {}
+        }
         ((void (*)(void *))(base + 0x1d1410))(scene);
         return;
     }
@@ -337,21 +401,17 @@ static void map_input(void *scene) {
     if (map_frame(scene, &frame)) {
         frame.token = ss_pointer_publish(&frame);
         reset_gesture(frame.token);
-        if (map_tap.armed) {
-            uint64_t selected = 1 + integer(scene, 0x5274) * 60 + integer(scene, 0x5298) * 5 + integer(scene, 0x529c);
-            if (map_tap.token != frame.token || map_tap.item != selected) map_tap.armed = 0;
-        }
         ss_pointer_event event;
         while (ss_pointer_take(frame.token, &event)) {
             if (event.type == SS_POINTER_DOWN) can_drag = ss_pointer_contains(frame.scroll, event.x, event.y);
-            if (event.type == SS_POINTER_CANCEL) map_tap.armed = 0;
             ss_pointer_action action = ss_pointer_track(&gesture, event);
-            if ((action.flags & SS_POINTER_PAN) && can_drag) { map_tap.armed = 0; map_pan(scene, action.dx); }
+            if ((action.flags & SS_POINTER_PAN) && can_drag) map_pan(scene, action.dx);
             if (action.flags & SS_POINTER_TAP) {
                 int hit = ss_pointer_hit(&frame, action.x, action.y);
-                if (hit < 0) { map_tap.armed = 0; continue; }
+                if (hit < 0) continue;
                 const ss_pointer_target *item = &frame.targets[hit];
-                int activate = rh_map_tap_activate(&map_tap, frame.token, item->id, item->flags & SS_POINTER_SELECTED);
+                /* Select, then confirm: a tap on the selected level enters it. A tap on another level selects it. */
+                int activate = (item->flags & SS_POINTER_SELECTED) != 0;
                 unsigned position = (unsigned)(item->id - 1) % 60;
                 if (!activate) map_focus(scene, position / 5, position % 5);
                 else ((void (*)(void *, int, void *, int))(base + 0x12d8f0))((uint8_t *)scene + 0x2978, 8, NULL, 0);
@@ -374,8 +434,166 @@ static int pause_input(void *scene) {
     }
     return 1;
 }
+/* Rhythm Toys. A toy scene uses the minigame scene class (main+0xd2b730). Its list at +0x38 (node:
+   next, previous, object) holds the toy's game object.
+   Who's Got Rhythm? (main+0xd212e0): the sprite at +0x3cd0 holds the rabbits. The actors at +0x3ce8
+   (5 per row, rows 0x28 apart) keep their sprites at +0x18. Columns are at +0x3db0, rows at +0x3db4, the cursor column and row at +0x3dd4
+   and +0x3dd8 (main+0x212df0). The cursor shows when +0x3dd0 is 1. +0x3ef0 counts the hearts.
+   The toy base sets +0x2a6a while the rabbits take input (main+0x12a980). A dialog that waits for A
+   clears it. The sound board leaves it clear.
+   Sound board (main+0xd0dce0): the sprite is at +0x3e08 and the board at +0x3e18. The board keeps the
+   grid cursor at +0x40 and +0x44, the palette cursor at +0xac and +0xb0, the page at +0x7b0, and the
+   open palette at +0x7b8 (main+0x13f5b0, main+0x13f810, main+0x13f910). The cells are matrix/rowRR/
+   columnCC and palette/rowRR/columnCC.
+   A tap on an item that is not selected starts a walk: one D-pad press at a time moves the cursor until
+   the item is selected. A tap on the selected item presses A. A page takes ZL or ZR presses and needs one
+   tap. The game checks each press itself, so a press that the game does not expect has no effect. */
+enum { TOY_RABBIT = 1, TOY_GRID = 2, TOY_PALETTE = 3, TOY_PAGE = 4 };
+enum { PAD_A = 0, PAD_X = 2, PAD_Y = 3, PAD_ZL = 8, PAD_ZR = 9, PAD_PLUS = 10,
+       PAD_LEFT = 12, PAD_UP = 13, PAD_RIGHT = 14, PAD_DOWN = 15 };
+struct walk_state { uint64_t owner, goal; int presses; double last; };
+static struct walk_state walk;
+static const char *const row_labels[] = {"row00", "row01", "row02", "row03"};
+static const char *const column_labels[] = {"column00", "column01", "column02", "column03"};
+
+static double seconds(void) {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return now.tv_sec + now.tv_nsec / 1e9;
+}
+static void *toy_object(void *scene, unsigned vtable) {
+    if (ptr(scene, 0) != base + 0xd2b730) return NULL;
+    uint8_t *head = (uint8_t *)scene + 0x38;
+    void *node = ptr(head, 0);
+    for (int n = 0; node && node != head && n < 16; ++n, node = ptr(node, 0)) {
+        void *object = ptr(node, 0x10);
+        if (object && ptr(object, 0) == base + vtable) return object;
+    }
+    return NULL;
+}
+static void toy_cell(ss_pointer_frame *frame, void *root, const char *group, int row, int column, int kind,
+                     float size, int selected) {
+    void *node = child(child(child(root, group), row_labels[row]), column_labels[column]);
+    float x = 0, y = 0;
+    if (node_point(root, node, &x, &y))
+        target(frame, (uint64_t)kind << 8 | (unsigned)(row * 4 + column), x, y, size, size, selected ? SS_POINTER_SELECTED : 0, -1);
+}
+static void toy_button(ss_pointer_frame *frame, void *root, const char *label, float dx, float dy, float w, float h, int button) {
+    float x = 0, y = 0;
+    if (point(root, label, &x, &y)) target(frame, 0x1000 + (uint64_t)button, x + dx, y + dy, w, h, SS_POINTER_BUTTON, button);
+}
+static int rabbit_frame(void *game, ss_pointer_frame *frame) {
+    int columns = integer(game, 0x3db0), rows = integer(game, 0x3db4);
+    uint8_t *bytes = game;
+    if (bytes[0x2a6a] != 1 || bytes[0x3dd0] != 1 || integer(game, 0x3ef0) <= 0) return 0;
+    if (columns < 1 || columns > 5 || rows < 1 || rows > 5) return 0;
+    *frame = (ss_pointer_frame){.owner = (uintptr_t)game, .mode = SS_POINTER_MENU};
+    /* The actor sprite (actor +0x18) stands on its point. The rabbit is about 0.9 column wide and
+       1.2 columns high. */
+    float feet[5][5][2] = {0}, size = 200;
+    int found[5][5] = {0};
+    for (int row = 0; row < rows; ++row) for (int column = 0; column < columns; ++column) {
+        void *actor = ptr(game, 0x3ce8 + row * 0x28 + column * 8);
+        found[row][column] = actor && node_point(ptr(game, 0x3cd0), ptr(actor, 0x18), &feet[row][column][0], &feet[row][column][1]);
+    }
+    if (columns > 1 && found[0][0] && found[0][1]) size = fminf(200, fabsf(feet[0][1][0] - feet[0][0][0]));
+    /* Row 0 stands in front and covers the rows behind it. The last target takes an overlap. */
+    for (int row = rows - 1; row >= 0; --row) for (int column = 0; column < columns; ++column) {
+        if (!found[row][column]) continue;
+        int selected = column == integer(game, 0x3dd4) && row == integer(game, 0x3dd8);
+        target(frame, (uint64_t)TOY_RABBIT << 8 | (unsigned)(row * 5 + column), feet[row][column][0],
+               feet[row][column][1] + size * 0.6f, size * 0.95f, size * 1.2f, selected ? SS_POINTER_SELECTED : 0, -1);
+    }
+    return frame->count > 0;
+}
+static int board_frame(void *game, ss_pointer_frame *frame) {
+    void *board = ptr(game, 0x3e18), *root = ptr(game, 0x3e08);
+    if (!board || !sprite(root)) return 0;
+    int palette = ((uint8_t *)board)[0x7b8] == 1, page = integer(board, 0x7b0);
+    *frame = (ss_pointer_frame){.owner = (uintptr_t)board ^ (uint64_t)palette << 56, .mode = SS_POINTER_MENU};
+    if (palette) {
+        for (int row = 0; row < 3; ++row) for (int column = 0; column < 3; ++column)
+            toy_cell(frame, root, "palette", row, column, TOY_PALETTE, 150,
+                     column == integer(board, 0xac) && row == integer(board, 0xb0));
+    } else {
+        for (int row = 0; row < 4; ++row) for (int column = 0; column < 4; ++column)
+            toy_cell(frame, root, "matrix", row, column, TOY_GRID, 150,
+                     column == integer(board, 0x40) && row == integer(board, 0x44));
+        for (int i = 0; i < 6; ++i) {
+            char label[16];
+            snprintf(label, sizeof label, "pattern%02d", i);
+            float x = 0, y = 0;
+            if (point(root, label, &x, &y))
+                target(frame, (uint64_t)TOY_PAGE << 8 | (unsigned)i, x, y, 200, 180, i == page ? SS_POINTER_SELECTED : 0, -1);
+        }
+        toy_button(frame, root, "text_L_button", -25, 0, 120, 110, PAD_ZL);
+        toy_button(frame, root, "text_R_button", 25, 0, 120, 110, PAD_ZR);
+        toy_button(frame, root, "speed", 0, 0, 440, 150, PAD_Y);
+        toy_button(frame, root, "text_Y_button", 0, 0, 260, 90, PAD_Y);
+    }
+    /* The point of text_AB_button is the upper left corner of the two lines "A Place" and "X Remove". */
+    toy_button(frame, root, "text_AB_button", 80, -26, 220, 72, PAD_A);
+    toy_button(frame, root, "text_AB_button", 80, -98, 220, 72, PAD_X);
+    toy_button(frame, root, "text_plus_button", -35, 0, 180, 80, PAD_PLUS);
+    return 1;
+}
+/* One walk step per call. The next press waits until the game has read the previous press. */
+static void toy_walk(const ss_pointer_frame *frame) {
+    if (!walk.goal) return;
+    int goal = -1, now = -1;
+    for (int i = 0; i < frame->count; ++i) {
+        uint64_t id = frame->targets[i].id;
+        if (id == walk.goal) goal = i;
+        if (id >> 8 == walk.goal >> 8 && (frame->targets[i].flags & SS_POINTER_SELECTED)) now = i;
+    }
+    if (walk.owner != frame->owner || goal < 0 || now < 0 || goal == now || walk.presses >= 12) {
+        if (trace) LOG("POINTER toy walk ends at %lld after %d presses", now < 0 ? -1ll : (long long)frame->targets[now].id, walk.presses);
+        walk.goal = 0;
+        return;
+    }
+    double time = seconds();
+    if (time - walk.last < 0.07) return;
+    const ss_pointer_rect *a = &frame->targets[now].rect, *b = &frame->targets[goal].rect;
+    float dx = (b->x + b->width / 2) - (a->x + a->width / 2), dy = (b->y + b->height / 2) - (a->y + a->height / 2);
+    int button = walk.goal >> 8 == TOY_PAGE ? (dx < 0 ? PAD_ZL : PAD_ZR)
+               : fabsf(dx) >= fabsf(dy) ? (dx < 0 ? PAD_LEFT : PAD_RIGHT) : (dy < 0 ? PAD_UP : PAD_DOWN);
+    ss_touch_press(1ull << button);
+    walk.presses++;
+    walk.last = time;
+}
+static int toy_input(void *scene) {
+    void *game;
+    ss_pointer_frame frame;
+    int shown = 0;
+    if ((game = toy_object(scene, 0xd212e0))) shown = rabbit_frame(game, &frame);
+    else if ((game = toy_object(scene, 0xd0dce0))) shown = board_frame(game, &frame);
+    if (!game) return 0;
+    if (!shown) { walk.goal = 0; return 0; }
+    frame.token = ss_pointer_publish(&frame);
+    trace_frame(&frame);
+    reset_gesture(frame.token);
+    toy_walk(&frame);
+    ss_pointer_event event;
+    while (ss_pointer_take(frame.token, &event)) {
+        ss_pointer_action action = ss_pointer_track(&gesture, event);
+        if (!(action.flags & SS_POINTER_TAP)) continue;
+        int hit = ss_pointer_hit(&frame, action.x, action.y);
+        if (hit < 0 || (frame.targets[hit].flags & SS_POINTER_BUTTON)) continue;
+        const ss_pointer_target *item = &frame.targets[hit];
+        if ((item->flags & SS_POINTER_SELECTED) && item->id >> 8 != TOY_PAGE) {
+            ss_touch_press(1ull << PAD_A);
+            walk.goal = 0;
+        } else {
+            walk = (struct walk_state){.owner = frame.owner, .goal = item->id};
+            toy_walk(&frame);
+        }
+        if (trace) LOG("POINTER toy %s %llu", walk.goal ? "walk to" : "confirm", (unsigned long long)item->id);
+    }
+    return 1;
+}
 static void publish_hints(void *scene) {
     if (pause_input(scene)) return;
+    if (toy_input(scene)) return;
     if (ss_touch_layout(ss_touch_left_get()) == SS_TOUCH_MENU) return;
     void *info = ptr(scene, 0x9408);
     if (!sprite(info)) return;

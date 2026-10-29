@@ -32,6 +32,7 @@
     "runtime/common/ss_input.c",
     "runtime/common/ss_pointer.c",
     "runtime/common/ss_haptics.c",
+    "runtime/common/ss_health_bars.c",
     "runtime/common/ss_display.c",
     "runtime/common/ss_shader_capture.c",
     "runtime/common/ss_audio.c",

@@ -3,6 +3,7 @@ import hashlib
 from datetime import datetime
 import json
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 from types import SimpleNamespace
@@ -125,6 +126,32 @@ class LauncherTests(unittest.TestCase):
         simulator = {**phone, 'hardwareProperties': {'reality': 'simulated', 'udid': 'simulator'}}
         with patch.object(launcher, 'device_json', return_value={'devices': [phone, simulator]}):
             self.assertEqual(launcher.devices(), [('phone', 'Phone')])
+
+    def test_upstream_patch_includes_new_files_from_plain_apply(self):
+        upstream = self.root / 'upstream'
+        git = lambda *arguments: subprocess.run(['git', '-C', str(upstream), *arguments], check=True,
+                                                capture_output=True)
+        upstream.mkdir()
+        git('init', '-q')
+        (upstream / 'old.c').write_text('one\n')
+        git('add', 'old.c')
+        git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-q', '-m', 'base')
+        (upstream / 'old.c').write_text('two\n')
+        (upstream / 'new dir').mkdir()
+        (upstream / 'new dir/new.c').write_text('new\n')
+        git('add', '--intent-to-add', 'new dir/new.c')
+        expected = launcher.upstream_patch(upstream, b'')
+        self.assertIn(b'new file mode', expected)
+        for mode in ([], ['--intent-to-add']):
+            git('reset', '-q', '--hard')
+            git('clean', '-qfd')
+            (upstream / 'patch').write_bytes(expected)
+            git('apply', *mode, 'patch')
+            (upstream / 'patch').unlink()
+            (upstream / 'other.c').write_text('other\n')
+            self.assertEqual(launcher.upstream_patch(upstream, expected), expected)
+            untracked = git('ls-files', '--others').stdout.decode().split()
+            self.assertEqual(untracked, ['other.c'])
 
 
 if __name__ == '__main__':

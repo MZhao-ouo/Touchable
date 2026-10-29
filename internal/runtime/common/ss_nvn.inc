@@ -61,6 +61,7 @@ static void ss_write_texels(const tex_t *texture, const view_t *view, const NVNc
         }
     }
     if (!texture->has_layout && region->width && region->height && region->depth) {
+        x_drain();   /* translate the submits queued before this write first */
         gfx_enter();
         ss_mtl_write_texels(texture, level, layer, region, source, row_stride, image_stride);
         gfx_leave();

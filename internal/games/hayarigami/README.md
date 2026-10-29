@@ -194,7 +194,7 @@ The synthetic fixtures contain color bars, a red frame and a sine wave. They con
 Build 5 installed after the user authorized reinstalling this app for storage space.
 Its iPhone output was black. Its log reports unsupported Metal language 4.1 libraries.
 The shader compiler now pins Metal 4.0 and the OS 26 deployment floor.
-Actual emitted compiler metadata is checked. The current shader chain is `ee0dad39f5a4`.
+Actual emitted compiler metadata is checked. The current shader chain is `033e5e61f36e`.
 Build 6 compiled, signed and installed. The actual iPhone collection title renders.
 The user confirmed A opens the selector and reported normal initial operation.
 The phone keeps build 6 while the user tests it.
@@ -215,7 +215,7 @@ This bounded check does not establish hour-long stability.
 Build 7 contains both fixes and the [original app icon](ios/Artwork/README.md).
 It is a build candidate. It has not replaced the user's build 6.
 
-The current Python suite has 66 checks. Native results include NVN 89, GPU deswizzle 19,
+The integrated Python suite has 77 checks. Native results include NVN 108, GPU deswizzle 19,
 clear/cache 29 and alpha 48 pixel comparisons. Separate tests cover display services,
 save commit/rollback, polling PCM, B-frame recovery and 120 HD frame lifetimes.
 These are unit or bounded host results. They do not replace the remaining device acceptance checks.
@@ -244,3 +244,18 @@ The current user's profile expiry is 2026-11-05 07:27:08 UTC. A fresh user's pro
 This repository contains code, synthetic tests and original icon artwork.
 It does not contain game packages, extracted assets, keys, signing material, saves or an asset-bearing IPA.
 The local-use authorization does not grant rights to publish the game's assets.
+
+## Public main integration
+
+The feature branch includes public main revision `8b22a49`.
+It preserves the upstream TV mode, iOS settings, copy-image stride and asynchronous translation queue.
+Command fences are published at enqueue time, before the worker can run.
+A nested command-stream walk handles copied command buffers and jump segments.
+The backend does not overwrite the published fence during older replay.
+A controlled translation pause reproduced premature fresh and reused sync waits before the fix.
+After the fix, both waits block and all 16,384 sampled source bytes per case stay correct.
+The full NVN test reports 108 passing checks.
+The launcher compares the dependency tree with pinned HEAD, including intent-to-add files.
+Its plain-apply and intent-to-add regressions both pass on this Git version.
+The Hayarigami manifest includes the shared health-bar data module required by the current common iOS shell.
+No Hayarigami health-bar feature is enabled.

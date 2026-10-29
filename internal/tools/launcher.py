@@ -119,6 +119,17 @@ def preflight():
     print('The Mac, Xcode, and game configuration checks passed.')
 
 
+def upstream_patch(upstream, expected):
+    """Return the upstream diff. Earlier bootstraps left the new patch files untracked, so git diff omitted them."""
+    created = [m.decode() for m in re.findall(rb'^diff --git a/(.+?) b/.+\nnew file mode ', expected, re.M)]
+    if created:
+        untracked = subprocess.check_output(['git', '-C', str(upstream), 'ls-files', '-z', '--others', '--', *created])
+        untracked = [p for p in untracked.decode().split('\0') if p]
+        if untracked:
+            subprocess.run(['git', '-C', str(upstream), 'add', '--intent-to-add', '--force', '--', *untracked], check=True)
+    return subprocess.check_output(['git', '-C', str(upstream), 'diff', 'HEAD', '--binary', '--full-index', '--no-ext-diff', '--no-color'])
+
+
 def prepare_dependencies(game, logs):
     required = [DEPENDENCIES / 'hactool/hactool', UPSTREAM / 'dm/tools/patch_nso.py']
     if not all(path.is_file() for path in required):
@@ -126,8 +137,8 @@ def prepare_dependencies(game, logs):
     revision = subprocess.check_output(['git', '-C', str(UPSTREAM), 'rev-parse', 'HEAD'], text=True).strip()
     if game.profile.get('upstream_revision') != revision:
         raise WorkspaceError('The upstream source revision does not match. Read the developer documentation.')
-    patch = subprocess.check_output(['git', '-C', str(UPSTREAM), 'diff', '--binary', '--full-index', '--no-ext-diff', '--no-color'])
-    if patch != (ROOT / 'patches/d2r-mobile.patch').read_bytes():
+    expected = (ROOT / 'patches/d2r-mobile.patch').read_bytes()
+    if upstream_patch(UPSTREAM, expected) != expected:
         raise WorkspaceError('The upstream source does not match the project patch. Check the local changes first.')
     required = [DEPENDENCIES / 'SPIRV-Cross/spirv-cross', DEPENDENCIES / 'dotnet/dotnet',
                 UPSTREAM / 'dm/gfx/tools/dmsh_xlate/bin/Release/net10.0/dmsh_xlate.dll']

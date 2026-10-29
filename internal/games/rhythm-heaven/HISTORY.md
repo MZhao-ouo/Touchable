@@ -11,6 +11,20 @@ Build 17 added iPad device checks. The results are in the records below.
 Build 29 is installed on the iPhone, but it has no device game test. Its results come from the Mac host, unit tests, and the iOS Simulator.
 The user ran build 30 on the iPhone. Builds 31–34 have no device tests. Their results come from the Mac host, unit tests, and offline renders.
 
+## TV mode follows the audio output (build 38)
+
+The mode button is removed. Built-in speaker, wired headphones, USB audio, and line out give handheld mode; other outputs (Bluetooth, AirPlay, HDMI) give TV mode. The app checks at launch, on route changes, and when it becomes active. Installed on the iPhone on 2026-10-21; saves matched the backup.
+
+## TV mode switches without a restart (build 37)
+
+The TV button changes the operation mode while the game runs (notification 30 and a controller style event). Mac host: handheld → TV → handheld, the game took notification 30 each time and kept running. Installed on the iPhone on 2026-10-21; saves matched the backup. The iPad mini was unavailable.
+
+## Long list taps and optional TV mode (build 36)
+
+Build 36 takes the ideas of pull requests #6 and #7: tap areas for every visible row of a scrolled list, and an optional TV mode that the app saves and applies at the next launch.
+Mac host: 11 tap targets after 20 rows in the music room list (2 before). `DM_OPMODE=1` opens the TV latency calibration. Unit tests, both Mac hosts, and the device build passed.
+Installed on the iPhone on 2026-10-21; saves matched the backup. The iPad mini was unavailable. See README.md.
+
 ## System glass press effect (build 34)
 
 In a Silksong session, the user asked for the glass button light effect to match the official Apple buttons.

@@ -24,14 +24,42 @@ def run(args):
     return result.stdout
 
 
-def metal_target_options(sdk):
+def metal_target_options(sdk, minimum="26.0"):
     # Match the runtime's OS 26 floor even when building with a newer Xcode.
-    deployment = {'macosx': '-mmacosx-version-min=26.0', 'iphoneos': '-mios-version-min=26.0'}
-    return ['-std=metal4.0', deployment[sdk]]
+    deployment = {'macosx': '-mmacosx-version-min=', 'iphoneos': '-mios-version-min='}
+    return ['-std=metal4.0', deployment[sdk] + minimum]
 
 
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+# Each SDK compiles for its own OS version unless a minimum is given. The device rejects a
+# library built for a newer OS, and every draw that uses it is skipped: the screen stays black.
+def metal_targets(config):
+    return {'macosx': config.minimum_macos_version, 'iphoneos': config.minimum_ios_version}
+
+
+def version_tuple(text):
+    return tuple(int(part) for part in str(text).split('.'))
+
+
+def metallib_target(path):
+    """Return the SDK name and minimum OS version recorded in a metallib header."""
+    data = Path(path).read_bytes()[:16]
+    if len(data) < 16 or data[:4] != b'MTLB':
+        raise ValueError(f'Not a Metal library: {path}')
+    sdk = {1: 'macosx', 2: 'iphoneos'}.get(data[11] & 0x7f)
+    if sdk is None:
+        raise ValueError(f'Unknown Metal library platform 0x{data[11]:02x}: {path}')
+    major, minor = struct.unpack_from('<HH', data, 12)
+    return sdk, (major, minor)
+
+
+def check_metallib(path, sdk, minimum):
+    found, version = metallib_target(path)
+    if found != sdk or version > version_tuple(minimum):
+        raise ValueError(f'{path} targets {found} {version[0]}.{version[1]}, not {sdk} {minimum}.')
 
 
 def tool_fingerprint(config):
@@ -39,6 +67,7 @@ def tool_fingerprint(config):
                    Path(__file__).with_name('shader_keys.py'), SPIRV, XLATE/'dmsh_xlate.dll', XLATE/'Ryujinx.Graphics.Shader.dll']}
     for sdk in ('macosx', 'iphoneos'):
         fingerprint[sdk] = run(['xcrun', '-sdk', sdk, 'metal', '--version']).strip()
+    fingerprint['targets'] = json.dumps(metal_targets(config), sort_keys=True)
     options = {key: config.profile[key] for key in ('nvn_window_origin', 'vertex_attribute_types', 'nvn_bindings', 'shader_functional_aliases', 'shader_exefs', 'nvn_alpha_test') if key in config.profile}
     if options:
         fingerprint['options'] = json.dumps(options, sort_keys=True)
@@ -279,12 +308,14 @@ def main():
             msl.write_text(source)
         resources = json.loads((work/f'{key}.res.json').read_text())
         refl = reflection(job, source, resources, chain)
+        targets = metal_targets(config)
         for sdk, name in [('macosx', 'mac')] + ([('iphoneos', 'ios')] if args.ios else []):
             target = out/name/f'b-{chain}'
             target.mkdir(parents=True, exist_ok=True)
             air = work/f'{key}.{name}.air'
-            run(['xcrun', '-sdk', sdk, 'metal', *metal_target_options(sdk), '-c', msl, '-o', air])
+            run(['xcrun', '-sdk', sdk, 'metal', *metal_target_options(sdk, targets[sdk]), '-c', msl, '-o', air])
             run(['xcrun', '-sdk', sdk, 'metallib', air, '-o', target/f'{key}_b.metallib'])
+            check_metallib(target/f'{key}_b.metallib', sdk, targets[sdk])
             (target/f'{key}_b.json').write_text(json.dumps(refl, indent=2)+'\n')
             (target/f'{key}_b.metal').write_text(source)
         return key

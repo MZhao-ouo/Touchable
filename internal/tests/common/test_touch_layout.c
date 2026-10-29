@@ -46,9 +46,14 @@ static void check_device(const device *d) {
     /* The face buttons keep the Switch diamond: A right, B down, X up, Y left. */
     assert(p.buttons[SS_PAD_A].x > p.buttons[SS_PAD_B].x && p.buttons[SS_PAD_B].y > p.buttons[SS_PAD_A].y);
     assert(p.buttons[SS_PAD_X].y < p.buttons[SS_PAD_A].y && p.buttons[SS_PAD_Y].x < p.buttons[SS_PAD_B].x);
-    /* Shoulder buttons sit on their own side. The triggers take the outer places. */
-    assert(p.buttons[SS_PAD_ZL].x < p.buttons[SS_PAD_L].x && p.buttons[SS_PAD_L].x < d->width / 2);
-    assert(p.buttons[SS_PAD_ZR].x > p.buttons[SS_PAD_R].x && p.buttons[SS_PAD_R].x > d->width / 2);
+    /* The user's sketch: ZL and ZR are slanted buttons below and outside the diamond, lower than B.
+       R is on the right side above A. L (the map) is on the right side. */
+    ss_pad_circle zl = p.buttons[SS_PAD_ZL], zr = p.buttons[SS_PAD_ZR], b_button = p.buttons[SS_PAD_B];
+    assert(zl.y == zr.y && zl.y > b_button.y && zl.x < p.buttons[SS_PAD_Y].x && zr.x > p.buttons[SS_PAD_A].x);
+    assert(ss_pad_width(zl) > zl.size && ss_pad_width(zr) > zr.size);
+    assert(p.buttons[SS_PAD_R].x > d->width / 2 && p.buttons[SS_PAD_R].y < p.buttons[SS_PAD_X].y &&
+           ss_pad_width(p.buttons[SS_PAD_R]) == p.buttons[SS_PAD_R].size);   /* the circle around the diamond */
+    assert(p.buttons[SS_PAD_L].x > d->width / 2);
     /* - is the control nearest the upper-left corner, and + is the control nearest the upper-right corner. */
     ss_pad_circle minus = p.buttons[SS_PAD_MINUS], plus = p.buttons[SS_PAD_PLUS];
     for (int i = 0; i <= SS_PAD_BUTTONS; ++i) {
@@ -64,10 +69,10 @@ static void check_device(const device *d) {
     assert(minus.y - minus.size / 2 >= d->top && minus.y + minus.size / 2 <= fmax(0.2 * d->height, d->window + 4 + minus.size) && plus.y == minus.y);
     /* On an iPad, also in a small window with the phone layout, - and + stay below the window controls. */
     if (d->pad) assert(minus.y - minus.size / 2 >= d->window);
-    /* Back takes the place of -. They never show together. The pad toggle stays at the
-       right edge below +, apart from + and the other controls, because it also shows with the pad.
-       A phone up to 390 points high (iPhone 16 Pro: 381 without the home indicator) has no space above
-       the capsule ZR, so the toggle goes next to +. */
+    /* Back takes the place of -. They never show together. L (the map) is round and goes below + at
+       the right edge. A phone up to 390 points high (iPhone 16 Pro: 381 without the home indicator) has
+       no space above the capsule ZR, so L goes next to +. The pad toggle goes next to + and L in the row
+       of +, apart from the other controls, because it also shows with the pad. */
     assert(p.back.x == minus.x && p.back.y == minus.y && p.back.size == minus.size);
     ss_pad_circle toggle = p.pad_toggle;
     double tr = toggle.size / 2;
@@ -75,32 +80,43 @@ static void check_device(const device *d) {
     assert(toggle.y - tr >= d->top && toggle.y + tr <= 0.33 * d->height);
     for (int j = 0; j <= SS_PAD_BUTTONS; ++j)
         assert(hypot(toggle.x - all[j].x, toggle.y - all[j].y) - tr - all[j].size / 2 - p.hit_margin - margin[j] >= 2);
-    if (d->height - d->bottom >= 390)
-        assert(toggle.x == plus.x && toggle.y > plus.y);
+    ss_pad_circle map = p.buttons[SS_PAD_L];
+    assert(ss_pad_width(map) == map.size && map.size > plus.size);   /* the circle around the map diamond */
+    /* L is below + when the space above R allows it, else next to +. The toggle is left of both. */
+    if (map.y > plus.y)   /* below +: the center of R, or the right edge of + where R is farther right */
+        assert((fabs(map.x - p.buttons[SS_PAD_R].x) < 1e-9 || fabs(map.x + map.size / 2 - plus.x - plus.size / 2) < 1e-9) &&
+               map.x + map.size / 2 <= plus.x + plus.size / 2 + 1e-9 && toggle.x < plus.x);
     else
-        assert(toggle.y == plus.y && toggle.x < plus.x && toggle.x > 0.75 * d->width);
+        assert(map.y == plus.y && map.x < plus.x && toggle.x < map.x);
+    if (d->height - d->bottom >= 390) assert(map.y > plus.y);
+    assert(toggle.y == plus.y && toggle.x > 0.5 * d->width);
     /* The D-pad center ignores a resting thumb but leaves most of the D-pad for directions. */
     assert(p.dpad_center >= 12 && p.dpad_center <= 0.2 * p.dpad.size);
     /* Build 18 makes the D-pad as wide as the face-button diamond after user feedback.
-       The D-pad center keeps the build 17 height: half of the 140-point D-pad above the lower edge of B.
+       Since 2026-10-25 the D-pad center has the height of the face-button center (between Y and A).
+       ZL and ZR are below the diamond, so B is above the lower margin.
        The D-pad stays below the row of - and +. */
     ss_pad_circle a = p.buttons[SS_PAD_A], y = p.buttons[SS_PAD_Y], b = p.buttons[SS_PAD_B];
     assert(fabs(p.dpad.size - (a.x - y.x + a.size)) < 1e-9);
-    assert(fabs(b.y + b.size / 2 - 70 * (p.tablet ? 1.2 : 1) - p.dpad.y) < 1e-9);
+    double lower = p.tablet ? d->height - fmax(d->bottom + 70, 90) : d->height - fmax(d->bottom + 18, 36);
+    assert(fabs(p.dpad.y - a.y) < 1e-9 && fabs(p.dpad.y - y.y) < 1e-9);
+    assert(b.y + b.size / 2 < lower);
     assert(p.dpad.y - p.dpad.size / 2 - p.dpad_margin > minus.y + minus.size / 2 + p.hit_margin);
     if (p.tablet) {
         /* A tablet raises the controls a little toward the thumbs and makes them larger.
            Build 12 put the stick center 254 points up on an iPad mini. That was too high.
            The D-pad takes the place of the stick. */
         assert(p.dpad.size > 200 && p.buttons[SS_PAD_A].size > 60);
-        assert(d->height - p.dpad.y >= 150 && d->height - p.dpad.y <= 200);
+        /* Since 2026-10-25 the D-pad has the height of the face buttons: 205 points up on an iPad mini. */
+        assert(d->height - p.dpad.y >= 150 && d->height - p.dpad.y <= 215);
         assert(d->height - d->bottom - (p.buttons[SS_PAD_B].y + p.buttons[SS_PAD_B].size / 2) >= 60);
         assert(p.dpad.x <= 160 && d->width - p.buttons[SS_PAD_B].x <= 180);
         /* Build 16 put the D-pad and A 42 points from the side edges. They covered too much of the game. */
         assert(p.dpad.x - p.dpad.size / 2 - d->left <= 20);
-        assert(d->width - d->right - p.buttons[SS_PAD_A].x - p.buttons[SS_PAD_A].size / 2 <= 20);
+        /* Since 2026-10-23 ZR is beside B and is the outermost control at the right. */
+        assert(d->width - d->right - p.buttons[SS_PAD_ZR].x - ss_pad_width(p.buttons[SS_PAD_ZR]) / 2 <= 20);
         for (int i = 0; i <= SS_PAD_BUTTONS; ++i)
-            assert(all[i].x - all[i].size / 2 - d->left >= 7.99 && d->width - d->right - all[i].x - all[i].size / 2 >= 7.99);
+            assert(all[i].x - ss_pad_width(all[i]) / 2 - d->left >= 7.99 && d->width - d->right - all[i].x - ss_pad_width(all[i]) / 2 >= 7.99);
         /* - and + stay below the window controls. - stays clear of the silk spool in the game HUD.
            The iPad mini simulator shows the spool at (75.5, 70.5) with a 25.5-point radius. The HUD scales with the height. */
         double hud = d->height / 744;
@@ -108,7 +124,7 @@ static void check_device(const device *d) {
         assert(minus.size >= 28 && p.pad_toggle.size >= 28);
     } else {
         assert(p.dpad.size == 168 && p.buttons[SS_PAD_A].size == 54);
-        assert(d->height - d->bottom - (p.dpad.y + p.dpad.size / 2) <= 36);
+        assert(d->height - d->bottom - (p.dpad.y + p.dpad.size / 2) <= 50);
     }
     printf("%-24s %s: D-pad (%.0f, %.0f) %.0f, A (%.0f, %.0f) %.0f, ZR (%.0f, %.0f), ZL (%.0f, %.0f), - (%.0f, %.0f), + (%.0f, %.0f), toggle (%.0f, %.0f)\n",
            d->name, p.tablet ? "tablet" : "phone", p.dpad.x, p.dpad.y, p.dpad.size,

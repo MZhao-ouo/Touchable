@@ -1,14 +1,20 @@
 # Rhythm Heaven IPA
 
 This folder holds the current Rhythm Heaven package and its checksum records.
-The current package is build 35.
+The current package is build 40.
 It supports iPhone, iPad, a separate in-game language setting, controller haptics, and a live border glow.
 The touch buttons use Liquid Glass.
 Build 29 fixes BeatSpell performance and touch.
-Build 30 rewrites the border glow to make the light more natural. Build 31 makes the letterbox border follow the picture faster. Build 32 makes the transition between the picture edge and the letterbox border smoother. Build 33 declares Game Mode and stays at 60 Hz. In build 34, a pressed glass button shows only the system effect. Build 35 hides the touch controls on loading screens.
-The current IPA is `RhythmHeaven-build35-loading-controls-20261020.ipa`.
-Its SHA-256 is `a27ffc633e98f11fd7e68cec3deaca6452c15a1815812cef82452a9ade16f551`.
-Build 35 is installed on the iPhone and the iPad mini (2026-10-20).
+Build 30 rewrites the border glow to make the light more natural. Build 31 makes the letterbox border follow the picture faster. Build 32 makes the transition between the picture edge and the letterbox border smoother. Build 33 declares Game Mode and stays at 60 Hz. In build 34, a pressed glass button shows only the system effect. Build 35 hides the touch controls on loading screens. Build 36 makes every visible row of a long list tappable and adds an optional TV mode. Build 37 switches TV mode without a restart. Build 38 chooses TV or handheld mode from the audio output and has no mode button. Build 39 adds touch for the Rhythm Toys (Who's Got Rhythm? and the sound boards), a full controller for Drum Lessons, and localized app names. Build 40 makes the level map select-then-confirm: a tap on the selected level starts it.
+The current IPA is `RhythmHeaven-build40-select-confirm-20261023.ipa`.
+Its SHA-256 is `1343d0c8e0ead233b08818b9fc2c9914a0028047ae0a3bef7a22fc84831e9130`.
+The build 39 IPA, JSON, and SHA-256 moved to `.touchable/archive/ipa/rhythm-heaven/before-build40/`.
+Build 40 is installed on the iPhone and the iPad mini (2026-10-23). The launcher backed up the saves before each install.
+The signing profile expires on 2026-10-27.
+The build 38 IPA, JSON, and SHA-256 moved to `.touchable/archive/ipa/rhythm-heaven/before-build39/`.
+The build 37 IPA, JSON, and SHA-256 moved to `.touchable/archive/ipa/rhythm-heaven/before-build38/`.
+The build 36 IPA, JSON, and SHA-256 moved to `.touchable/archive/ipa/rhythm-heaven/before-build37/`.
+The build 35 IPA, JSON, and SHA-256 moved to `.touchable/archive/ipa/rhythm-heaven/before-build36/`.
 The build 34 IPA, JSON, and SHA-256 moved to `.touchable/archive/ipa/rhythm-heaven/before-build35/`.
 Controller haptics are verified only on the iPad mini with a DualSense.
 The build 33 IPA, JSON, and SHA-256 moved to `.touchable/archive/ipa/rhythm-heaven/before-build34/`.

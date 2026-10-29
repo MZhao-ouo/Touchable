@@ -22,6 +22,7 @@ int gate_svc_present(int number) {
 }
 /* touchable_game_install also installs the touch adapter. It needs the game modules. */
 void ss_touch_ui_install(void) {}
+void ss_enemy_bars_install(void) {}
 
 #include "../../../runtime/common/ss_display.c"
 #include "../runtime/ss_display.c"

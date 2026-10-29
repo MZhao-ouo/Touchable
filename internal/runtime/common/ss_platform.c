@@ -13,7 +13,7 @@
 void hle_bind_system_event(void *event, int auto_clear);
 void hle_signal_system_event(void *event);
 static _Atomic int focus = 1;
-static _Atomic int focus_pending;
+static _Atomic int focus_pending, opmode_pending, opmode_notify;
 static _Alignas(16) uint8_t notification_event[0x100];
 static _Alignas(16) uint8_t health_event[0x100];
 static int notification_ready, health_ready;
@@ -105,10 +105,39 @@ HLE_FORCE("_ZN2nn2oe27GetDefaultDisplayResolutionEPiS1_", "Fixed 720p handheld d
     *height = 720;
 }
 
-int dm_opmode(void) { return 0; }
+/* Operation mode: 0 handheld, 1 console (TV). DM_OPMODE gives the start value. Rhythm Heaven
+   uses the console value to offer the TV latency calibration. dm_opmode_set() changes the mode
+   while the game runs, like docking a Switch: the game gets notification 30 (operation mode
+   changed) and a controller style event, and reads the mode and the controller style again. */
+static _Atomic int ss_opmode = -1;
+int dm_opmode(void) {
+    int mode = atomic_load(&ss_opmode);
+    if (mode < 0) {
+        const char *value = getenv("DM_OPMODE");
+        mode = value && *value && atoi(value) ? 1 : 0;
+        int none = -1;
+        atomic_compare_exchange_strong(&ss_opmode, &none, mode);
+        mode = atomic_load(&ss_opmode);
+        LOG("Operation mode: %s (DM_OPMODE)", mode ? "TV" : "handheld");
+    }
+    return mode;
+}
 /* Performance mode for nn::oe::GetPerformanceMode: 0 normal, 1 boost (the docked value).
-   A game adapter can set it in touchable_game_install(). The operation mode stays handheld. */
+   A game adapter can set it in touchable_game_install(). */
 int ss_performance_mode;
+void ss_input_style_changed(void);
+void dm_opmode_set(int mode) {
+    mode = mode != 0;
+    int old = dm_opmode();
+    if (old == mode) return;
+    atomic_store(&ss_opmode, mode);
+    LOG("Operation mode: %s -> %s (live)%s", old ? "TV" : "handheld", mode ? "TV" : "handheld",
+        atomic_load(&opmode_notify) ? "" : "; the game has not enabled the notification yet");
+    ss_input_style_changed();
+    if (!atomic_load(&opmode_notify)) return;
+    atomic_store(&opmode_pending, 1);
+    if (notification_ready) hle_signal_system_event(notification_event);
+}
 void dm_focus_set(int value) {
     if (atomic_exchange(&focus, value) == value) return;
     atomic_store(&focus_pending, 1);
@@ -117,16 +146,18 @@ void dm_focus_set(int value) {
 HLE_FORCE("_ZN2nn2oe15SetCpuBoostModeENS0_12CpuBoostModeE", "Host controls CPU frequency", void, ss_cpu_boost, int mode) { (void)mode; }
 HLE_FORCE("_ZN2nn2oe27SetPerformanceConfigurationENS0_15PerformanceModeEi", "Host controls CPU and GPU frequency", void, ss_perf_set, int mode, int config) { (void)mode; (void)config; }
 HLE_FORCE("_ZN2nn2oe27SetPerformanceConfigurationEi", "Host controls CPU and GPU frequency", void, ss_perf_set_one, int config) { (void)config; }
-HLE_FORCE("_ZN2nn2oe16GetOperationModeEv", "Handheld display", int, ss_mode, void) { return 0; }
+HLE_FORCE("_ZN2nn2oe16GetOperationModeEv", "Read the current operation mode", int, ss_mode, void) { return dm_opmode(); }
 HLE_FORCE("_ZN2nn2oe18GetPerformanceModeEv", "The game adapter selects the performance mode", int, ss_performance, void) { return ss_performance_mode; }
 HLE_FORCE("_ZN2nn2oe20GetCurrentFocusStateEv", "Read app focus", int, ss_focus, void) { return atomic_load(&focus); }
 HLE_FORCE("_ZN2nn2oe20SetFocusHandlingModeENS0_17FocusHandlingModeE", "App lifecycle delivers focus changes", void, ss_focus_mode, int mode) { (void)mode; }
 HLE_FORCE("_ZN2nn2oe28SetResumeNotificationEnabledEb", "App lifecycle delivers resume changes", void, ss_resume_notify, unsigned on) { (void)on; }
-HLE_FORCE("_ZN2nn2oe42SetOperationModeChangedNotificationEnabledEb", "Handheld mode is fixed", void, ss_mode_notify, unsigned on) { (void)on; }
+HLE_FORCE("_ZN2nn2oe42SetOperationModeChangedNotificationEnabledEb", "The game asks for operation mode notifications", void, ss_mode_notify, unsigned on) { atomic_store(&opmode_notify, on != 0); }
 HLE_FORCE("_ZN2nn2oe44SetPerformanceModeChangedNotificationEnabledEb", "Host controls performance", void, ss_perf_notify, unsigned on) { (void)on; }
 HLE_FORCE("_ZN2nn2oe25TryPopNotificationMessageEPj", "Read app lifecycle notifications", unsigned, ss_notification, uint32_t *out) {
-    if (!atomic_exchange(&focus_pending, 0)) return 0;
-    *out = 15; return 1;
+    /* 15 focus changed, 30 operation mode changed. Both ask the game to read the current state. */
+    if (atomic_exchange(&focus_pending, 0)) { *out = 15; return 1; }
+    if (atomic_exchange(&opmode_pending, 0)) { LOG("Operation mode: the game took notification 30"); *out = 30; return 1; }
+    return 0;
 }
 HLE_FORCE("_ZN2nn2oe27GetNotificationMessageEventEv", "App lifecycle event", void *, ss_notification_event, void) {
     if (!notification_ready) { hle_bind_system_event(notification_event, 0); notification_ready = 1; }

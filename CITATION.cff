@@ -1,0 +1,16 @@
+cff-version: 1.2.0
+message: "If you use or adapt Touchable or its touch control design, please cite it as below."
+type: software
+title: "Touchable"
+abstract: "Native iPhone and iPad touch controls for user-supplied Switch games, built on an Apple Silicon Mac."
+authors:
+  - alias: "mzhao"
+    website: "https://github.com/MZhao-ouo"
+repository-code: "https://github.com/MZhao-ouo/Touchable"
+url: "https://github.com/MZhao-ouo/Touchable"
+license: MIT
+keywords:
+  - iOS
+  - iPadOS
+  - touch controls
+  - game port
