@@ -42,14 +42,17 @@ All 53 Python tests pass.
 Local evidence is under `.touchable/work/hayarigami/reports/`.
 Game inputs, keys, extracted files, logs and builds remain outside Git.
 
-## Remaining work
+## Current acceptance scope
 
-Implement the title adapter and verify a new CPU rewrite.
-Run the Touchable Mac host and record the actual next stop.
-Add embedded NVN shader extraction and confirm bindings.
-Verify movie decoding, repeated input, story play and save/reload.
-Build, sign, install and test the independent iPhone app.
-Export an IPA only with its actual validation scope recorded.
+The user is testing iPhone build 6. Its collection title renders.
+The user confirmed that touch A opens the three-game selector.
+The Mac host also reached part 1 story text. This does not establish complete-game support.
+The source build 7 adds an original icon and a pipeline-cache stability fix.
+Do not interrupt the user's current device test to install it.
+
+Remaining checks are manual save and cold reload, part 2/3 story flow, audio/video synchronization, background/resume on device and long sessions.
+One extracted geometry shader is unsupported. No test requests it so far.
+Do not mark the adapter `adapted` until its acceptance checks are recorded.
 
 See [the approved design](../../../docs/superpowers/specs/2026-10-21-hayarigami-touchable-design.md).
 
@@ -108,3 +111,136 @@ The low-pass and wet signal are approximations. Console-identical defaults and p
 Build 3 is the next device candidate. No title screen or playable scene has been verified in this framework.
 
 Shader staging no longer copies source file attributes. This avoids failure when iCloud compression flags cannot be set on generated files. A synthetic attribute-copy failure test fails before the change and passes after it. All 59 Python tests pass. All 381 iOS shader files were read locally before rebuilding.
+
+## 2026-10-29 continuation: display resolution services
+
+The referenced ChatGPT conversation has no project attachment or URL.
+This repository is the independent Touchable adaptation from the approved design.
+Its real path is `/Users/vim/LocalDocuments/Development/hayarigami-ios/Touchable`.
+The existing `adapt/hayarigami` branch was clean at revision `2693867`.
+The user confirmed ownership and authorized local use of the existing game inputs.
+All 35 extracted files match the prior provenance SHA-256 records.
+All four NSO hashes and Build IDs match the profile. All 12 segment hashes pass.
+The resources include 22 `PS_FS_V1` archives and MP4 movies in the three FOAF directories.
+No Unity assets were found. A specific commercial engine name is not established.
+This is not a fresh NSP extraction or a fresh content-signature check.
+
+The build 3 device log stops at `sdk+0x3a5050` after window initialization.
+The pinned SDK symbol identifies `nn::oe::GetDefaultDisplayResolutionChangeEvent`.
+That function dereferences the absent console service returned through its PLT.
+The shared platform now intercepts it and binds a caller-owned, auto-clear event.
+A fresh Mac run passes that point and stops in the companion resolution query at `sdk+0x3a4fdc`.
+The platform now intercepts that query too. It reports the fixed 1280x720 handheld display.
+This does not change the game's 1920x1080 render textures or the iOS view size.
+The fixed output does not signal resolution changes.
+These changes use the existing kernel event bridge. They add no fixed-address patches.
+
+The new native regressions fail without each takeover and pass with both.
+They check symbol registration, caller storage, clear mode, query output bounds and guest write preparation.
+The tests replace the kernel-event boundary with a recorder. They do not execute guest SDK events.
+AddressSanitizer and UndefinedBehaviorSanitizer pass. All 59 Python tests pass.
+The touch layout test passes 12 fixtures, including the logged iPhone 16 view and safe area.
+These layout checks do not establish touch response during gameplay.
+
+The current host is macOS 27.0.1 with Xcode 27.1. The earlier Metal 4 host limit is historical.
+A fresh host build runs the game and passes both display service calls.
+It then aborts at `nvnTextureBuilderGetSparseTileLayout`, which the graphics layer does not implement.
+This is an actual unsupported texture operation. No title screen or story scene is verified.
+The existing layout code has no sparse tile-width representation. Returning an empty success is not a fix.
+Sparse support needs consistent query, allocation, layout and texture-transfer checks.
+
+Build 4 passes full iOS compilation, linking and development signing.
+Strict/deep signature verification passes. The profile expires at 2026-11-05 07:27:08 UTC.
+The build contains existing Metal encoder-type warnings. No warning-free build is claimed.
+The first installation failed with `MIInstallerErrorDomain` error 13 because the free development profile had three apps.
+The user authorized removal of `com.local.optionslab.OptionsLabUITests.xctrunner` only.
+The runner was removed. OptionsLab and D2R remain installed.
+Build 4 then installed successfully. The device app inventory confirms version 0.1, build 4.
+The first launch was denied because the phone was locked. The user unlocked it.
+A new launch on iPhone 16, iOS 26.2.1, reached `nnMain`, audio setup and window initialization.
+It passed both display service crash points, then aborted at `nvnTextureBuilderGetSparseTileLayout`.
+The device exit code is 134. The game frame is `main+0x281668`.
+This verifies the display fixes on the phone. It does not verify title rendering or gameplay.
+The device log is `reports/20261029/device-build4-game.log` under the local game work directory.
+No final or playable IPA is exported. No game files or keys are included in the source patch.
+Story entry, movies, audio, save/reload and all three games remain acceptance checks.
+Other game packages are absent in this clone. Their gameplay regressions were not run.
+
+Evidence: `.touchable/work/hayarigami/reports/20261029/` and the game build log directory.
+
+## 2026-10-29 continuation: title, movie and story rendering
+
+Resident sparse 2D layouts now use matching query, allocation, CPU transfer and GPU transfer rules.
+Packaged texture layout reads two bytes. It preserves horizontal and vertical GOB dimensions.
+Unsupported sparse forms return zero size and fail texture initialization.
+The shared backend records tiled-cache flushes and GPU fences. A fence waits for its submission.
+This conservative wait can be slower than an exact in-stream fence.
+Timestamp conversion uses a wide intermediate. Queue usage reset has no host arena counters to reset.
+
+The title enables per-draw fragment alpha comparison at buffer 30.
+All eight NVN comparisons and dynamic references have actual GPU pixel coverage.
+The game profile and compile define must agree. Other games keep the existing shader path.
+The SDK CommitSaveData alias uses the shared atomic save transaction.
+The polling AudioOut overload does not require an event. PCM consumption and buffer release have native coverage.
+
+The movie adapter replaces only movie::Decoder construction.
+The original extractor, metadata and buffer calls remain guest code.
+Apple VideoToolbox decodes AVC. AudioConverter decodes AAC.
+Worker stacks, a retained keyframe window, presentation-order output and client-capacity copying are tested.
+Temporary decoder unavailability after suspension retries the same packet after foreground recovery.
+Direct-return and callback-error regressions failed before that fix and pass after it.
+The synthetic fixtures contain color bars, a red frame and a sine wave. They contain no game media.
+
+Build 5 installed after the user authorized reinstalling this app for storage space.
+Its iPhone output was black. Its log reports unsupported Metal language 4.1 libraries.
+The shader compiler now pins Metal 4.0 and the OS 26 deployment floor.
+Actual emitted compiler metadata is checked. The current shader chain is `ee0dad39f5a4`.
+Build 6 compiled, signed and installed. The actual iPhone collection title renders.
+The user confirmed A opens the selector and reported normal initial operation.
+The phone keeps build 6 while the user tests it.
+
+The Mac host rendered part 1 title, prologue selection, AVC/AAC film and story text.
+The frame `play8-14160.png` shows the first story line after bounded input.
+An earlier film loop grew to 24 GB and exited through the memory watchdog.
+The heap report found thousands of Metal pipelines and retained output data.
+The decoded frame queue itself stayed bounded.
+Recorded keys differ in write masks for unbound color attachments.
+The cache now excludes those unused nibbles for normal passes. Merged logical masks remain intact.
+The real pipeline test changed from 64 extra objects to zero. Active write masks still select different pipelines.
+The output-copy call also needs its own autorelease pool on the long-lived guest thread.
+The full acquire/copy/release regression failed before that change and passes for 120 HD frames after it.
+A fresh two-minute film run keeps the pipeline count at three and resident memory near 546–565 MB.
+The earlier run reached about 9 GB over the same interval.
+This bounded check does not establish hour-long stability.
+Build 7 contains both fixes and the [original app icon](ios/Artwork/README.md).
+It is a build candidate. It has not replaced the user's build 6.
+
+The current Python suite has 66 checks. Native results include NVN 89, GPU deswizzle 19,
+clear/cache 29 and alpha 48 pixel comparisons. Separate tests cover display services,
+save commit/rollback, polling PCM, B-frame recovery and 120 HD frame lifetimes.
+These are unit or bounded host results. They do not replace the remaining device acceptance checks.
+Other game inputs are absent in this clone. Their gameplay regressions could not run.
+Evidence remains local under `reports/20261029-sparse/` in the game work directory.
+
+## Local build and signing
+
+Supply your own legally held package and local keys. Follow the approved preparation workflow.
+Run all commands from the repository root. Keep inputs, keys and saves outside Git.
+
+```sh
+.touchable/venv/bin/python internal/tools/games.py check
+.touchable/venv/bin/python -m unittest discover -s internal/tests
+.touchable/venv/bin/python internal/tools/build_shaders.py --game hayarigami --ios
+.touchable/venv/bin/python internal/tools/build_host.py --game hayarigami --jobs 4
+.touchable/venv/bin/python internal/tools/prepare_ios.py --game hayarigami
+```
+
+Open `.touchable/build/games/hayarigami/ios-project/Hayarigami.xcodeproj` in Xcode.
+Select your own development team and the Hayarigami scheme. Select an iOS 26+ device.
+Build and run. Keep the existing Bundle ID to retain this app's save namespace.
+A free development profile needs renewal after its displayed expiry and has an app-count limit.
+Device installation can require space for a staged second app copy.
+The current user's profile expiry is 2026-11-05 07:27:08 UTC. A fresh user's profile can differ.
+This repository contains code, synthetic tests and original icon artwork.
+It does not contain game packages, extracted assets, keys, signing material, saves or an asset-bearing IPA.
+The local-use authorization does not grant rights to publish the game's assets.

@@ -48,18 +48,21 @@ Read the current manifests before each task. This table is a snapshot. `game.jso
 
 ### Hayarigami record
 
-Hayarigami was added on 2026-10-21 from the user's base package, Title ID `010095b01af94000`.
-The new adapter is `in-progress`. Its Bundle ID is `com.guiyu.TouchableHayarigami`.
-It uses the shared Touchable runtime and iOS app. It does not use the previous independent Hayarigami framework.
-The profile pins `main`, `subsdk0` and `sdk`. The runtime does not execute `rtld`.
-All 12 NSO segment hashes and new CPU rewrite checks passed.
-The shader extractor reports 127 supported vertex/fragment records and one unsupported geometry record.
-New Mac/iOS Metal libraries and the iOS 26 app were built. Build 1 passed strict/deep signature verification.
-A real Mac launch stopped in dyld because this machine runs macOS 15.7.5 and the backend requires macOS 26 Metal 4.
-No Mac guest execution or host gameplay result is claimed.
-The independent iPhone app installed and reached `nnMain`. Build 2 stopped in SDK `AddDelay`.
-Shared six-channel reverb and delay changes have synthetic coverage. Gameplay checks are pending.
-See [the game record](../../internal/games/hayarigami/README.md) for current evidence and limits.
+Hayarigami 1/2/3 uses Title ID `010095b01af94000` and the shared Touchable runtime.
+The adapter remains `in-progress`. Its Bundle ID is `com.guiyu.TouchableHayarigami`.
+Its save path is `Documents/Saves/Hayarigami`. The runtime executes `main`, `subsdk0` and `sdk`, not `rtld`.
+All 12 NSO segment checks and CPU rewrite checks passed. The user authorized local game input use.
+The shader extractor builds 127 records. One geometry record remains unsupported.
+On 2026-10-29 the Mac host rendered the collection selector, part 1 menus, opening film and story text.
+iPhone 16 build 6 renders the collection title. The user confirmed A opens the selector and reported normal initial operation.
+Build 6 fixed the iOS 26.2.1 rejection of Xcode 27.1 default Metal 4.1 libraries.
+Build 7 source adds an original icon and bounds pipeline cache growth from unused attachment masks.
+Movie decoding uses Apple AVC/AAC at the original guest decoder boundary. Tests cover foreground retry and output ownership.
+Shared display, sparse texture, alpha, GPU fence, timestamp, save-commit and polling AudioOut changes have focused native coverage.
+Manual save/reload, part 2/3 story flow, audible movie synchronization and long device sessions remain unverified.
+The user is testing build 6. Do not reinstall or interrupt that test without a new request.
+The Mac is now macOS 27.0.1. The earlier macOS 15 Metal 4 limit is historical.
+See [the game record](../../internal/games/hayarigami/README.md) for evidence, build steps and limits.
 
 ### Silksong record
 

@@ -14,6 +14,26 @@ from prepare_ios import (shell_controller_haptics, shell_localizations,
 from workspace import ROOT, WorkspaceError
 
 
+class MetalDeploymentTests(unittest.TestCase):
+    def test_shader_compilation_pins_runtime_compatible_language_and_os(self):
+        import build_shaders
+        options = getattr(build_shaders, 'metal_target_options', None)
+        self.assertIsNotNone(options, 'Offline Metal libraries currently inherit the installed Xcode OS/language defaults')
+        import subprocess
+        for sdk, deployment in [('iphoneos', '-mios-version-min=26.0'), ('macosx', '-mmacosx-version-min=26.0')]:
+            flags = options(sdk)
+            self.assertIn('-std=metal4.0', flags)
+            self.assertIn(deployment, flags)
+            with tempfile.TemporaryDirectory() as directory:
+                source, output = Path(directory)/'sample.metal', Path(directory)/'sample.ll'
+                source.write_text('#include <metal_stdlib>\nusing namespace metal; kernel void sample(device uint *out [[buffer(0)]]) { out[0]=42; }')
+                subprocess.run(['xcrun', '-sdk', sdk, 'metal', *flags, '-fmodules-cache-path=' + str(Path(directory)/'cache'), '-S', '-emit-llvm', str(source), '-o', str(output)], check=True, capture_output=True)
+                ir = output.read_text()
+                self.assertIn('!air.language_version', ir)
+                self.assertIn('i32 4, i32 0, i32 0', ir)
+                self.assertRegex(ir, r'air64(?:_v[0-9]+)?-apple-(?:ios|macosx)26\.0\.0')
+
+
 class GeneratedResourceTests(unittest.TestCase):
     def test_shader_staging_does_not_require_source_file_attributes(self):
         with tempfile.TemporaryDirectory() as directory:

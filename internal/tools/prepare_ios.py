@@ -186,6 +186,7 @@ def main():
         resource_phase = obj('resources', f'isa=PBXResourcesBuildPhase; buildActionMask=2147483647; files={array(resource_build)}; runOnlyForDeploymentPostprocessing=0;')
         framework_phase = obj('frameworks', 'isa=PBXFrameworksBuildPhase; buildActionMask=2147483647; files=(); runOnlyForDeploymentPostprocessing=0;')
         frameworks = ['UIKit', 'Foundation', 'CoreGraphics', 'QuartzCore', 'Metal', 'AudioToolbox', 'AVFAudio', 'CoreHaptics', 'ImageIO', 'UniformTypeIdentifiers', 'GameController']
+        frameworks += list(game.frameworks)
         ldflags = flags + [v for framework in frameworks for v in ('-framework', framework)]
         common = {
             'SDKROOT': 'iphoneos', 'IPHONEOS_DEPLOYMENT_TARGET': game.minimum_ios_version, 'ARCHS': 'arm64',

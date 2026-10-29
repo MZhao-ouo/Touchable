@@ -4,7 +4,7 @@
   "display_name": "流行之神",
   "product_name": "Hayarigami",
   "bundle_id": "com.guiyu.TouchableHayarigami",
-  "build_version": 3,
+  "build_version": 7,
   "title_id": "010095b01af94000",
   "profile": "profile.json",
   "status": "in-progress",
@@ -15,7 +15,8 @@
     "sdk"
   ],
   "runtime_sources": [
-    "runtime/hy_game.c"
+    "runtime/hy_game.c",
+    "runtime/hy_media.m"
   ],
   "common_runtime_sources": [
     "runtime/common/ss_host.c",
@@ -43,7 +44,8 @@
   "compile_defines": [
     "TOUCHABLE_SWITCH_RUNTIME",
     "SS_SHADER_KEY_CODE",
-    "SS_GUEST_LARGE_HEAP"
+    "SS_GUEST_LARGE_HEAP",
+    "SS_NVN_ALPHA_TEST"
   ],
   "adapters": {
     "runtime": "hayarigami",
@@ -69,5 +71,10 @@
   "common_ios_sources": [
     "platform/ios/App.m",
     "platform/ios/Haptics.m"
+  ],
+  "frameworks": [
+    "VideoToolbox",
+    "CoreMedia",
+    "CoreVideo"
   ]
 }

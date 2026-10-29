@@ -92,6 +92,19 @@ HLE_FORCE("_ZN2nn2vi20GetDisplayVsyncEventEPNS_2os15SystemEventTypeEPNS0_7Displa
     return RES_OK;
 }
 
+/* Handheld output resolution is fixed. Keep a valid, unsignaled event for
+   the guest's resolution-monitor thread. SDK 14.3 uses auto-clear mode. */
+HLE_FORCE("_ZN2nn2oe38GetDefaultDisplayResolutionChangeEventEPNS_2os11SystemEventE", "Fixed handheld resolution event", void, ss_resolution_event, void *event) {
+    hle_bind_system_event(event, 1);
+}
+
+HLE_FORCE("_ZN2nn2oe27GetDefaultDisplayResolutionEPiS1_", "Fixed 720p handheld display", void, ss_default_resolution, int *width, int *height) {
+    dm_guest_write_prepare(width, sizeof(*width));
+    *width = 1280;
+    dm_guest_write_prepare(height, sizeof(*height));
+    *height = 720;
+}
+
 int dm_opmode(void) { return 0; }
 /* Performance mode for nn::oe::GetPerformanceMode: 0 normal, 1 boost (the docked value).
    A game adapter can set it in touchable_game_install(). The operation mode stays handheld. */

@@ -34,5 +34,6 @@
       "0x120"
     ]
   },
-  "nvn_window_origin": "upper-left"
+  "nvn_window_origin": "upper-left",
+  "nvn_alpha_test": true
 }

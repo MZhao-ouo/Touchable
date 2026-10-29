@@ -290,3 +290,20 @@ Next required action, if any:
 ```
 
 For documentation, check all local links and referenced scripts. For implementation, include the observed behavior that establishes the fix. Keep untested device behavior explicit. Update the game record, project summary, or workflow when the task changes their facts.
+
+### Display service boundary regression
+
+Run from the project root:
+
+```sh
+mkdir -p .touchable/build/checks
+xcrun clang -Wall -Wextra -Werror -Wno-unused-function -pthread \
+  -I.touchable/dependencies/d2r-mobile/dm/host \
+  internal/tests/common/test_platform_event.c \
+  -o .touchable/build/checks/test_platform_event
+.touchable/build/checks/test_platform_event
+```
+
+Add `-fsanitize=address,undefined` for the native sanitizer check.
+This tests service registration and output behavior. It uses an event-boundary recorder.
+It does not replace a real guest SDK or device startup test.

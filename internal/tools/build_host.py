@@ -57,6 +57,7 @@ def main():
                    for path in relative_sources]
         text = '# Generated from games/' + game.id + '/game.json.\n'
         text += 'GAME := ' + game.id + '\n'
+        text += 'GAME_FRAMEWORKS := ' + ' '.join(game.frameworks) + '\n'
         text += 'HOST_OUTPUT := ' + make_quote(relative_host / (game.id + '-host')) + '\n'
         text += 'OBJECT_DIR := ' + make_quote(relative_host / 'obj') + '\n'
         text += 'GAME_HEADER := ' + make_quote(relative_host / 'touchable_game_config.h') + '\n'

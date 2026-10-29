@@ -39,6 +39,17 @@ class WorkspaceTests(unittest.TestCase):
         data.update(fields)
         path.write_text(json.dumps(data))
 
+    def test_extra_frameworks_are_explicit_names(self):
+        self.create()
+        self.change_manifest('first-game',frameworks=['VideoToolbox','CoreMedia'])
+        self.assertEqual(getattr(load_game('first-game',self.root),'frameworks',None),('VideoToolbox','CoreMedia'))
+
+    def test_rejects_framework_paths(self):
+        self.create()
+        self.change_manifest('first-game',frameworks=['../Private'])
+        with self.assertRaises(GameError):
+            getattr(load_game('first-game',self.root),'frameworks',None)
+
     def test_game_paths_and_names_do_not_overlap(self):
         first, second = self.create(), self.create("second-game")
         for attribute in ("game_dir", "base_dir", "patched_dir", "capture_dir", "reports_dir",
