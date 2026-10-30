@@ -271,8 +271,8 @@ def main():
         # Optional per-game shell settings from game.json "ios".
         info['CFBundleDevelopmentRegion'] = 'en'
         name_folders = stage_display_names(names, gen / 'Names')
-        if shell.get('touch_layout') not in (None, 'switch', 'rhythm'):
-            raise WorkspaceError('ios.touch_layout must be switch or rhythm.')
+        if shell.get('touch_layout') not in (None, 'switch', 'rhythm', 'native'):
+            raise WorkspaceError('ios.touch_layout must be switch, rhythm, or native.')
         if shell.get('touch_layout'): info['TouchableTouchLayout'] = shell['touch_layout']
         if shell.get('native_drawable'): info['TouchableNativeDrawable'] = True
         if shell_controller_haptics(shell): info['TouchableControllerHaptics'] = True

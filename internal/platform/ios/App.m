@@ -13,6 +13,7 @@
 #include "ss_pointer.h"
 #include "ss_health_bars.h"
 #include "TouchLayout.h"
+#include "ScreenLayout.h"
 
 int ss_host_run(const char *directory);
 void ss_input_set(uint64_t buttons, int32_t x, int32_t y);
@@ -149,6 +150,7 @@ static CGAffineTransform padShapeTransform(PadShape shape, CGSize size) {
 
 @interface PadButton : UIButton
 @property(nonatomic) uint64_t bit;
+@property(nonatomic) BOOL plainAppearance;
 @property(nonatomic) PadShape shape;   /* a transform gives the glass this outline */
 @property(nonatomic, strong) UILabel *caption;   /* the upright title of a shaped button */
 @property(nonatomic, strong) UIImageView *captionImage;   /* the upright symbol of a shaped button */
@@ -278,7 +280,7 @@ static CGAffineTransform padShapeTransform(PadShape shape, CGSize size) {
 /* The system glass press response fades out over about 0.2 seconds after the release. A new glass
    background ends it at once (user request on 2026-10-23: a faster button response). */
 - (void)endPressLook {
-    if (!self.configuration) return;
+    if (self.plainAppearance || !self.configuration) return;
     UIButtonConfiguration *config = self.configuration;
     self.configuration = nil;
     self.configuration = config;
@@ -888,6 +890,102 @@ static NSString *buttonSymbol(int button) {
 - (void)touchesCancelled:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event { [self cancelInput]; }
 @end
 
+/* Native screen input has no invisible controller zones. Its buttons stay outside the picture. */
+@interface ScreenTouchView : UIView
+@property(nonatomic) CGRect gameRect;
+@property(nonatomic, strong) UITouch *finger;
+@property(nonatomic, strong) NSArray<PadButton *> *controls;
+- (void)placeControls:(UIEdgeInsets)safe;
+- (void)cancelInput;
+- (void)refresh;
+@end
+@implementation ScreenTouchView
+- (instancetype)init {
+    if ((self = [super initWithFrame:CGRectZero])) {
+        self.multipleTouchEnabled = YES;
+        NSArray *titles = @[@"↑", @"←", @"→", @"↓", @"L", @"ZL", @"−", @"A", @"B", @"X", @"Y", @"R", @"ZR", @"+"];
+        const int bits[] = {13,12,14,15,6,8,11,0,1,2,3,7,9,10};
+        NSMutableArray *controls = [NSMutableArray array];
+        for (int i=0; i<14; ++i) {
+            PadButton *button = [PadButton buttonWithType:UIButtonTypeCustom];
+            button.bit = 1ull << bits[i];
+            button.plainAppearance = YES;
+            button.accessibilityLabel = titles[i];
+            button.accessibilityIdentifier = [@"screen-control-" stringByAppendingString:titles[i]];
+            UIButtonConfiguration *config = [UIButtonConfiguration plainButtonConfiguration];
+            config.title = titles[i];
+            config.contentInsets = NSDirectionalEdgeInsetsZero;
+            config.background.cornerRadius = 8;
+            config.background.strokeWidth = 1;
+            config.background.strokeColor = [UIColor colorWithWhite:0.35 alpha:1];
+            button.configuration = config;
+            button.configurationUpdateHandler = ^(UIButton *control) {
+                UIButtonConfiguration *look = control.configuration;
+                look.baseForegroundColor = UIColor.whiteColor;
+                look.background.backgroundColor = control.highlighted ? [UIColor colorWithRed:0.48 green:0.12 blue:0.14 alpha:1] : [UIColor colorWithWhite:0.12 alpha:1];
+                control.configuration = look;
+            };
+            [self addSubview:button]; [controls addObject:button];
+        }
+        self.controls = controls;
+    }
+    return self;
+}
+- (void)cancelInput {
+    self.finger = nil;
+    ss_touch_screen_clear();
+    for (PadButton *button in self.controls) [button cancelTrackingWithEvent:nil];
+    for (PadButton *button in self.controls) button.highlighted = NO;
+}
+- (void)refresh {
+    for (PadButton *button in self.controls) button.hidden = controllerInUse;
+}
+- (void)placeControls:(UIEdgeInsets)safe {
+    ss_screen_layout layout = ss_screen_layout_make(self.bounds.size.width, self.bounds.size.height,
+        safe.left, safe.right, safe.top, safe.bottom);
+    ss_screen_rect g = layout.game;
+    CGRect rect = CGRectMake(g.x,g.y,g.width,g.height);
+    if (!CGRectEqualToRect(rect,self.gameRect)) [self cancelInput];
+    self.gameRect = rect;
+    for (int i=0; i<14; ++i) {
+        ss_screen_rect c = layout.buttons[i];
+        self.controls[i].frame = CGRectMake(c.x,c.y,c.width,c.height);
+    }
+}
+- (BOOL)locate:(UITouch *)touch x:(int *)x y:(int *)y {
+    CGPoint p = [touch locationInView:self];
+    CGRect g = self.gameRect;
+    return ss_screen_location((ss_screen_rect){g.origin.x,g.origin.y,g.size.width,g.size.height},p.x,p.y,x,y);
+}
+- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    if (self.finger) return;
+    for (UITouch *touch in touches) {
+        int x=0,y=0;
+        if (![self locate:touch x:&x y:&y]) continue;
+        self.finger = touch;
+        ss_touch_screen_set(1,x,y);
+        fprintf(stderr,"Screen touch: down %d %d\n",x,y);
+        break;
+    }
+}
+- (void)touchesMoved:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    if (!self.finger || ![touches containsObject:self.finger]) return;
+    int x=0,y=0;
+    [self locate:self.finger x:&x y:&y];
+    ss_touch_screen_set(1,x,y);
+}
+- (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    if (!self.finger || ![touches containsObject:self.finger]) return;
+    int x=0,y=0;
+    [self locate:self.finger x:&x y:&y];
+    ss_touch_screen_set(0,x,y);
+    self.finger = nil;
+}
+- (void)touchesCancelled:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    if (self.finger && [touches containsObject:self.finger]) [self cancelInput];
+}
+@end
+
 static NSString *touchLayout(void) {
     return [NSBundle.mainBundle objectForInfoDictionaryKey:@"TouchableTouchLayout"] ?: @"switch";
 }
@@ -962,6 +1060,7 @@ static void *runGame(void *unused) {
 
 @interface GameViewController : UIViewController
 @property(nonatomic, strong) MetalView *metalView;
+@property(nonatomic, strong) ScreenTouchView *screenTouchView;
 @property(nonatomic, strong) HealthBarView *healthBars;   /* only when SS_HEALTH_BARS is set */
 @property(nonatomic, strong) PadDpad *dpad;
 @property(nonatomic, strong) GlassLayer *glassLayer;   /* the Switch-style controls, in one glass container */
@@ -1021,13 +1120,17 @@ static void *runGame(void *unused) {
     self.buttons = [NSMutableArray new];
     self.zones = [NSMutableArray new];
     self.rhythmLayout = [touchLayout() isEqualToString:@"rhythm"];
-    NSArray *names; const int *bits;
+    NSArray *names = nil; const int *bits = NULL;
     static const int switchBits[] = {0, 1, 2, 3, 6, 7, 8, 9, 10, 11};
     /* A stays transparent. B and +/- use the black side bars.
        Direction controls follow the current level frame. Y and X show when the level uses them.
        A visible A and ZR show only with the full controller. */
     static const int rhythmBits[] = {12, 13, 14, 15, 1, 11, 10, 3, 2, 0, 9};
-    if (self.rhythmLayout) {
+    if ([touchLayout() isEqualToString:@"native"]) {
+        switchControls = YES;
+        self.screenTouchView = [ScreenTouchView new];
+        [self.view addSubview:self.screenTouchView];
+    } else if (self.rhythmLayout) {
         TouchZone *a = [[TouchZone alloc] initWithBit:1ull << 0 title:@"A"];
         a.appearanceHidden = YES;
         a.feedbackEnabled = YES;
@@ -1081,7 +1184,7 @@ static void *runGame(void *unused) {
         }
         [controls addSubview:button]; [self.buttons addObject:button];
     }
-    if (!self.rhythmLayout) {
+    if (!self.rhythmLayout && !self.screenTouchView) {
         self.backButton = [PadButton buttonWithType:UIButtonTypeCustom];
         self.backButton.bit = 1ull << SS_BUTTON_B;
         self.backButton.accessibilityLabel = @"Back";
@@ -1098,6 +1201,8 @@ static void *runGame(void *unused) {
         [controls addSubview:self.backButton];
         [controls addSubview:self.skipButton];
         [controls addSubview:self.padToggle];
+    }
+    if (!self.rhythmLayout) {
         /* Show the touch controls when the last real controller goes away. */
         [NSNotificationCenter.defaultCenter addObserverForName:GCControllerDidDisconnectNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
             for (GCController *controller in GCController.controllers) if (controller.extendedGamepad) return;
@@ -1137,6 +1242,7 @@ static void *runGame(void *unused) {
 }
 - (void)pollInput:(CADisplayLink *)link {
     [self followDisplayRate:link];
+    if (self.screenTouchView) { [self.screenTouchView refresh]; updateInput(); return; }
     [self.pointerView refresh];
     [self.healthBars refreshHidden:self.loadingScreen || self.menuFrame || self.cutsceneFrame || self.mapFrame];
     int controls = self.leftZone ? ss_pointer_controls() : SS_CONTROLS_SHOW;
@@ -1261,6 +1367,7 @@ static void *runGame(void *unused) {
    a drag moves the map. The toggle shows the pad again until the menu, the cutscene, or the map ends. A loading screen hides all controls. A short gap in the game's frames keeps the controls as
    they are. Without frames from the game, the pad shows. */
 - (void)updateTouchMenu {
+    if (self.screenTouchView) { [self.screenTouchView refresh]; return; }
     int controls = ss_pointer_controls();
     if (controls != SS_CONTROLS_KEEP) {
         ss_pointer_frame frame;
@@ -1335,6 +1442,16 @@ static void *runGame(void *unused) {
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
     CGSize size = self.view.bounds.size;
+    if (self.screenTouchView) {
+        self.screenTouchView.frame = self.view.bounds;
+        [self.screenTouchView placeControls:self.view.safeAreaInsets];
+        CGRect picture = self.screenTouchView.gameRect;
+        self.metalView.frame = picture;
+        ss_display_set_view(picture.size.width,picture.size.height);
+        ss_display_size render = ss_display_resolution(720);
+        gameLayer.drawableSize = CGSizeMake(render.width,render.height);
+        return;
+    }
     ss_display_set_view(size.width, size.height);
     ss_display_size render = ss_display_resolution(720);
     self.metalView.frame = self.view.bounds;
@@ -1473,6 +1590,7 @@ static void *runGame(void *unused) {
     }
 }
 - (void)cancelTouches {
+    [self.screenTouchView cancelInput];
     for (PadButton *button in self.buttons) if (button.highlighted) button.highlighted = NO;
     if (self.backButton.highlighted) self.backButton.highlighted = NO;
     if (self.skipButton.highlighted) self.skipButton.highlighted = NO;

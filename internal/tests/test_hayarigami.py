@@ -21,7 +21,7 @@ class HayarigamiTests(unittest.TestCase):
         game = load_game('hayarigami')
         self.assertEqual(game.data['adapters'].get('runtime'), 'hayarigami')
         self.assertEqual(game.data['adapters'].get('rewrite'), 'switch-native')
-        self.assertEqual(game.data['ios'].get('touch_layout'), 'switch')
+        self.assertEqual(game.data['ios'].get('touch_layout'), 'native')
         self.assertIn('platform/ios/App.m', game.data.get('common_ios_sources', []))
         self.assertTrue(game.runtime_sources[0].is_file())
 

@@ -269,3 +269,18 @@ The launcher compares the dependency tree with pinned HEAD, including intent-to-
 Its plain-apply and intent-to-add regressions both pass on this Git version.
 The Hayarigami manifest includes the shared health-bar data module required by the current common iOS shell.
 No Hayarigami health-bar feature is enabled.
+
+
+## Build 9: screen input bridge and controls outside the picture (2026-10-30)
+
+Hayarigami selects `ios.touch_layout = native`. A dedicated UIKit surface sends one finger's down, move and up events to the original `GetTouchScreenState` APIs. It uses the 1280 x 720 touch coordinate space. The 40-byte contact and 16-byte state header follow [libnx HID definitions](https://github.com/switchbrew/libnx/blob/master/nx/include/switch/services/hid.h). Short taps retain both edges between game polls. Cancellation clears queued and held contacts. Controller buttons do not generate screen touches.
+
+The complete game picture keeps a 16:9 fit. Four direction keys and all ten controller keys use opaque backgrounds. They sit in two safe-area side rails. Short windows use bottom rows. No glass container, blur, or dimming layer is created for this layout. The picture is smaller to leave room for the controls. Other games keep their configured layouts. Build 9 keeps the Bundle ID and save directory.
+
+Validation: native screen ABI, short tap edges, drag, cancel, all 16 capacity variants, queue overflow, concurrent producer/reader and pad isolation pass with ASan/UBSan. Ten geometry fixtures check 14 controls, safe bounds, no control/picture overlap and coordinate edges. The prior 12 controller layout fixtures and the native haptics test pass. All 77 Python tests pass. Mac host build and a 30-second isolated-save startup pass. The iOS build and strict/deep signature verification pass. Device screenshots show the opaque rails outside the title picture. Device logs record a direct screen contact. Menu selection by direct touch still needs a device acceptance check. The initial collection title says "PRESS ANY BUTTON" and did not advance from that one direct contact; A remains available in the right rail.
+
+The final build also registers real-controller disconnect notifications in native mode. Removing the last controller restores the buttons. That hardware path has not been exercised with a real controller.
+
+Local evidence: `.touchable/work/hayarigami/reports/20261030-touch/`. No game screenshots or user data are included in Git.
+
+Build 8 failed device acceptance: direct cover taps did not advance the title, and releasing A raised `NSInternalInconsistencyException` because the inherited glass press reset set the button configuration to nil while a configuration update handler was active. Build 9 skips that reset for plain buttons. Build 9 compiles, passes strict/deep signature verification, and is installed on iPhone 16. The user confirmed that A works normally and accepted this version for now. Direct cover/menu tapping remains unverified and is not claimed as working.
