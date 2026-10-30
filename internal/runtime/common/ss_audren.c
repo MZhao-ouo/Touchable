@@ -24,7 +24,8 @@ struct ss_ar_mix {
 
 struct ss_ar_voice {
     ss_ar_renderer *owner;
-    int used, released, rate, channels;
+    int used, released, rate, channels, format;
+    int16_t coefficients[16], adpcm_history[2], loop_history[2];
     struct { int state; float pitch; ss_ar_mix *destination; float volume[SS_AR_CHANNELS][SS_AR_MIX_BUFFERS]; } client, server;
     ss_ar_wavebuffer pending[SS_AR_WAVEBUFFERS];
     int pending_count, client_queued, outstanding;
@@ -161,7 +162,7 @@ void ss_ar_mix_volume(ss_ar_mix *mix, ss_ar_mix *destination, float volume, int 
 }
 
 ss_ar_voice *ss_ar_acquire_voice(ss_ar_renderer *renderer, int rate, int channels, int format) {
-    if (rate < 1000 || rate > 192000 || channels < 1 || channels > SS_AR_CHANNELS || format != SS_AR_FORMAT_PCM16) return NULL;
+    if (rate < 1000 || rate > 192000 || channels < 1 || channels > SS_AR_CHANNELS || (format != SS_AR_FORMAT_PCM16 && (format != SS_AR_FORMAT_ADPCM || channels != 1))) return NULL;
     pthread_mutex_lock(&renderer->client_lock);
     ss_ar_voice *voice = NULL;
     for (int i = 0; i < renderer->voice_count; ++i)
@@ -169,7 +170,7 @@ ss_ar_voice *ss_ar_acquire_voice(ss_ar_renderer *renderer, int rate, int channel
     if (voice) {
         pthread_mutex_lock(&renderer->server_lock);
         memset(voice, 0, sizeof(*voice));
-        voice->owner = renderer; voice->rate = rate; voice->channels = channels;
+        voice->owner = renderer; voice->rate = rate; voice->channels = channels; voice->format = format;
         voice->client.state = voice->server.state = SS_AR_STOPPED;
         voice->client.pitch = voice->server.pitch = 1;
         voice->phase = 1;
@@ -178,6 +179,13 @@ ss_ar_voice *ss_ar_acquire_voice(ss_ar_renderer *renderer, int rate, int channel
     }
     pthread_mutex_unlock(&renderer->client_lock);
     return voice;
+}
+
+void ss_ar_voice_adpcm_parameters(ss_ar_voice *voice, const int16_t coefficients[16]) {
+    if (!voice || !coefficients) return;
+    pthread_mutex_lock(&voice->owner->server_lock);
+    memcpy(voice->coefficients, coefficients, sizeof(voice->coefficients));
+    pthread_mutex_unlock(&voice->owner->server_lock);
 }
 
 void ss_ar_release_voice(ss_ar_voice *voice) {
@@ -335,6 +343,7 @@ static void voice_reset(ss_ar_voice *voice) {
     voice->position = voice->played = 0;
     voice->phase = 1;
     memset(voice->history, 0, sizeof(voice->history));
+    memset(voice->adpcm_history, 0, sizeof(voice->adpcm_history));
 }
 
 static int mix_depth(ss_ar_mix *mix) {
@@ -392,6 +401,25 @@ static void finish_buffer(ss_ar_voice *voice) {
     if (end_of_stream) voice->played = 0;
 }
 
+/* DSP ADPCM: each eight-byte frame contains a predictor/scale and fourteen signed nibbles. */
+static int16_t decode_adpcm(ss_ar_voice *voice, const uint8_t *data, int64_t position) {
+    const uint8_t *block = data + position / 14 * 8;
+    int nibble = (int)(position % 14);
+    unsigned predictor = block[0] >> 4;
+    if (predictor > 7) predictor = 7;
+    int value = (block[1 + nibble / 2] >> (nibble % 2 ? 0 : 4)) & 15;
+    if (value >= 8) value -= 16;
+    int64_t sample = (int64_t)value * (1 << (block[0] & 15)) * 2048 + 1024;
+    sample += (int64_t)voice->coefficients[predictor * 2] * voice->adpcm_history[0];
+    sample += (int64_t)voice->coefficients[predictor * 2 + 1] * voice->adpcm_history[1];
+    sample >>= 11;
+    if (sample > 32767) sample = 32767;
+    if (sample < -32768) sample = -32768;
+    voice->adpcm_history[1] = voice->adpcm_history[0];
+    voice->adpcm_history[0] = (int16_t)sample;
+    return (int16_t)sample;
+}
+
 /* Read the next source frame into history slot 3. Silence when the queue is empty. */
 static void fetch(ss_ar_voice *voice) {
     int channels = voice->channels;
@@ -401,15 +429,29 @@ static void fetch(ss_ar_voice *voice) {
     }
     while (voice->queue_count) {
         const ss_ar_wavebuffer *buffer = &voice->queue[voice->queue_head];
-        int64_t frames = buffer->data ? (int64_t)(buffer->size / (2u * (unsigned)channels)) : 0;
+        int adpcm = voice->format == SS_AR_FORMAT_ADPCM;
+        int64_t frames = !buffer->data ? 0 : adpcm ? (int64_t)(buffer->size / 8 * 14) : (int64_t)(buffer->size / (2u * (unsigned)channels));
         int64_t end = buffer->end < frames ? buffer->end : frames, start = buffer->start;
         if (start < 0 || start >= end) { finish_buffer(voice); continue; }
-        if (!voice->in_buffer) { voice->position = start; voice->in_buffer = 1; }
-        const int16_t *frame = buffer->data + voice->position * channels;
-        for (int c = 0; c < channels; ++c) voice->history[c][3] = frame[c] * (1.0f / 32768);
+        if (!voice->in_buffer) {
+            voice->position = start; voice->in_buffer = 1;
+            if (adpcm) {
+                if (buffer->context && buffer->context_size >= 6)
+                    memcpy(voice->adpcm_history, buffer->context + 1, sizeof(voice->adpcm_history));
+                memcpy(voice->loop_history, voice->adpcm_history, sizeof(voice->loop_history));
+            }
+        }
+        if (adpcm) voice->history[0][3] = decode_adpcm(voice, (const uint8_t *)buffer->data, voice->position) * (1.0f / 32768);
+        else {
+            const int16_t *frame = buffer->data + voice->position * channels;
+            for (int c = 0; c < channels; ++c) voice->history[c][3] = frame[c] * (1.0f / 32768);
+        }
         ++voice->played;
         if (++voice->position >= end) {
-            if (buffer->loop) voice->position = start;
+            if (buffer->loop) {
+                voice->position = start;
+                if (adpcm) memcpy(voice->adpcm_history, voice->loop_history, sizeof(voice->adpcm_history));
+            }
             else finish_buffer(voice);
         }
         return;

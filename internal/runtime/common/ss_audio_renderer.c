@@ -364,6 +364,22 @@ HLE_FORCE("_ZN2nn5audio20IsMemoryPoolAttachedEPKNS0_14MemoryPoolTypeE", "Host me
     return value && value->attached;
 }
 
+HLE_FORCE("_ZN2nn5audio18GetMemoryPoolStateEPKNS0_14MemoryPoolTypeE", "Report host memory pool attachment", int, ss_ar_pool_state, const void *pool) {
+    ar_pool *value = slot_get(pool);
+    return value && value->attached ? 1 : 0;
+}
+
+HLE_FORCE("_ZN2nn5audio17ReleaseMemoryPoolEPNS0_19AudioRendererConfigEPNS0_14MemoryPoolTypeE", "Release host memory pool record", void, ss_ar_pool_release, void *config, void *pool) {
+    (void)config;
+    free(slot_get(pool)); slot_put(pool, NULL);
+}
+
+HLE_FORCE("_ZN2nn5audio18CopyMemoryPoolDataEPKNS0_14MemoryPoolTypeEPvPKvm", "Copy host-visible audio data", void, ss_ar_pool_copy, const void *pool, void *destination, const void *source, size_t size) {
+    (void)pool;
+    dm_guest_write_prepare(destination, size);
+    memcpy(destination, source, size);
+}
+
 /* ---------- I3DL2 reverb ---------- */
 
 HLE_FORCE("_ZN2nn5audio35GetRequiredBufferSizeForI3dl2ReverbEii", "The host reverb keeps its state in host memory",
@@ -452,9 +468,13 @@ HLE_FORCE("_ZN2nn5audio11RemoveDelayEPNS0_19AudioRendererConfigEPNS0_9DelayTypeE
 
 HLE_FORCE("_ZN2nn5audio16AcquireVoiceSlotEPNS0_19AudioRendererConfigEPNS0_9VoiceTypeEiiNS0_12SampleFormatEiPKvm", "Host voice",
           unsigned, ss_ar_voice_acquire, void *config, void *voice, int rate, int channels, int format, int priority, const void *parameter, size_t size) {
-    (void)priority; (void)parameter; (void)size;
-    if (format != SS_AR_FORMAT_PCM16) die("Audio voice sample format %d is not implemented", format);
+    (void)priority;
+    if (format != SS_AR_FORMAT_PCM16 && format != SS_AR_FORMAT_ADPCM) die("Audio voice sample format %d is not implemented", format);
     ss_ar_voice *value = ss_ar_acquire_voice(slot_get(config), rate, channels, format);
+    if (value && format == SS_AR_FORMAT_ADPCM) {
+        if (!parameter || size < 32) die("ADPCM voice requires sixteen coefficients");
+        ss_ar_voice_adpcm_parameters(value, parameter);
+    }
     slot_put(voice, value);
     return value != NULL;
 }
@@ -501,7 +521,7 @@ _Static_assert(sizeof(ss_guest_wavebuffer) == 0x30, "WaveBuffer ABI");
 
 HLE_FORCE("_ZN2nn5audio16AppendWaveBufferEPNS0_9VoiceTypeEPKNS0_10WaveBufferE", "Queue host voice data",
           unsigned, ss_ar_voice_append, void *voice, const ss_guest_wavebuffer *buffer) {
-    ss_ar_wavebuffer value = {buffer->buffer, buffer->size, buffer->start, buffer->end, buffer->loop != 0, buffer->end_of_stream != 0, buffer};
+    ss_ar_wavebuffer value = {buffer->buffer, buffer->size, buffer->start, buffer->end, buffer->loop != 0, buffer->end_of_stream != 0, buffer, buffer->context, buffer->context_size};
     return ss_ar_append(slot_get(voice), &value);
 }
 

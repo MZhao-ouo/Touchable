@@ -12,14 +12,16 @@
 
 enum { SS_AR_WAVEBUFFERS = 4, SS_AR_CHANNELS = 6, SS_AR_MIX_BUFFERS = 24, SS_AR_MAX_FRAME = 1024 };
 enum { SS_AR_STARTED = 0, SS_AR_STOPPED = 1, SS_AR_PAUSED = 2 };
-enum { SS_AR_FORMAT_PCM16 = 2 };
+enum { SS_AR_FORMAT_PCM16 = 2, SS_AR_FORMAT_ADPCM = 6 };
 
 typedef struct {
-    const int16_t *data;     /* interleaved PCM16 frames */
+    const int16_t *data;     /* interleaved PCM16, or mono DSP ADPCM bytes */
     uint64_t size;           /* bytes */
     int32_t start, end;      /* sample frame offsets; playback covers [start, end) */
     int loop, end_of_stream;
     const void *tag; /* Original guest buffer returned after consumption. */
+    const int16_t *context; /* DSP predictor/scale, history 1, history 2. */
+    uint64_t context_size;
 } ss_ar_wavebuffer;
 
 /* nn::audio::I3dl2ReverbParameterSet. Gains are millibels except dry_gain. */
@@ -46,6 +48,7 @@ void ss_ar_mix_destination(ss_ar_mix *mix, ss_ar_mix *destination);
 void ss_ar_mix_volume(ss_ar_mix *mix, ss_ar_mix *destination, float volume, int source, int target);
 
 ss_ar_voice *ss_ar_acquire_voice(ss_ar_renderer *renderer, int rate, int channels, int format);
+void ss_ar_voice_adpcm_parameters(ss_ar_voice *voice, const int16_t coefficients[16]);
 void ss_ar_release_voice(ss_ar_voice *voice);
 void ss_ar_voice_state(ss_ar_voice *voice, int state);
 void ss_ar_voice_pitch(ss_ar_voice *voice, float pitch);
