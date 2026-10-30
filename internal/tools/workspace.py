@@ -109,6 +109,12 @@ class GameConfig:
     @property
     def compile_defines(self): return tuple(self.data.get("compile_defines", []))
     @property
+    def frameworks(self):
+        values = self.data.get("frameworks", [])
+        if not isinstance(values, list) or any(not isinstance(v, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", v) for v in values):
+            raise WorkspaceError("frameworks must contain system framework names.")
+        return tuple(values)
+    @property
     def title_id(self): return self.data.get("title_id") or self.profile.get("title_id")
     @property
     def work_dir(self): return state_root(self.root) / "work" / self.id

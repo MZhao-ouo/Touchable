@@ -364,6 +364,22 @@ HLE_FORCE("_ZN2nn5audio20IsMemoryPoolAttachedEPKNS0_14MemoryPoolTypeE", "Host me
     return value && value->attached;
 }
 
+HLE_FORCE("_ZN2nn5audio18GetMemoryPoolStateEPKNS0_14MemoryPoolTypeE", "Report host memory pool attachment", int, ss_ar_pool_state, const void *pool) {
+    ar_pool *value = slot_get(pool);
+    return value && value->attached ? 1 : 0;
+}
+
+HLE_FORCE("_ZN2nn5audio17ReleaseMemoryPoolEPNS0_19AudioRendererConfigEPNS0_14MemoryPoolTypeE", "Release host memory pool record", void, ss_ar_pool_release, void *config, void *pool) {
+    (void)config;
+    free(slot_get(pool)); slot_put(pool, NULL);
+}
+
+HLE_FORCE("_ZN2nn5audio18CopyMemoryPoolDataEPKNS0_14MemoryPoolTypeEPvPKvm", "Copy host-visible audio data", void, ss_ar_pool_copy, const void *pool, void *destination, const void *source, size_t size) {
+    (void)pool;
+    dm_guest_write_prepare(destination, size);
+    memcpy(destination, source, size);
+}
+
 /* ---------- I3DL2 reverb ---------- */
 
 HLE_FORCE("_ZN2nn5audio35GetRequiredBufferSizeForI3dl2ReverbEii", "The host reverb keeps its state in host memory",
@@ -395,13 +411,70 @@ HLE_FORCE("_ZN2nn5audio24SetI3dl2ReverbParametersEPNS0_15I3dl2ReverbTypeEPKNS0_2
     ss_ar_reverb_params(slot_get(reverb), parameters);
 }
 
+/* ---------- Delay ---------- */
+
+HLE_FORCE("_ZN2nn5audio8AddDelayEPNS0_19AudioRendererConfigEPNS0_9DelayTypeEPvmPNS0_10SubMixTypeENS_8TimeSpanEi", "Host delay effect",
+          Result, ss_ar_delay_add, void *config, void *delay, void *buffer, size_t size, void *mix, int64_t maximum_ns, int channels) {
+    (void)buffer; (void)size;
+    ss_ar_delay *value=ss_ar_add_delay(slot_get(config),slot_get(mix),channels,maximum_ns);
+    if (!value) die("Cannot add delay with %d channels and %lld ns capacity",channels,(long long)maximum_ns);
+    slot_put(delay,value); return RES_OK;
+}
+HLE_FORCE("_ZN2nn5audio19SetDelayInputOutputEPNS0_9DelayTypeEPKaS4_i", "Host delay routing",
+          void, ss_ar_delay_route, void *delay, const int8_t *input, const int8_t *output, int count) {
+    ss_ar_delay_io(slot_get(delay),input,output,count);
+}
+HLE_FORCE("_ZN2nn5audio15SetDelayEnabledEPNS0_9DelayTypeEb", "Host delay switch",
+          void, ss_ar_delay_switch, void *delay, unsigned enabled) {
+    ss_ar_delay_enable(slot_get(delay),enabled&255);
+}
+HLE_FORCE("_ZN2nn5audio12SetDelayTimeEPNS0_9DelayTypeENS_8TimeSpanE", "Host delay duration",
+          void, ss_ar_delay_duration, void *delay, int64_t ns) {
+    ss_ar_delay_set_time(slot_get(delay),ns);
+}
+HLE_FORCE("_ZN2nn5audio12GetDelayTimeEPKNS0_9DelayTypeE", "Host delay duration",
+          int64_t, ss_ar_delay_get_duration, const void *delay) {
+    return ss_ar_delay_time(slot_get(delay));
+}
+HLE_FORCE("_ZN2nn5audio14SetDelayInGainEPNS0_9DelayTypeEf", "Host delay input gain",
+          void, ss_ar_delay_input, void *delay, float gain) {
+    ss_ar_delay_gain(slot_get(delay),SS_AR_DELAY_INPUT,gain);
+}
+HLE_FORCE("_ZN2nn5audio15SetDelayDryGainEPNS0_9DelayTypeEf", "Host delay dry gain",
+          void, ss_ar_delay_dry, void *delay, float gain) {
+    ss_ar_delay_gain(slot_get(delay),SS_AR_DELAY_DRY,gain);
+}
+HLE_FORCE("_ZN2nn5audio20SetDelayFeedbackGainEPNS0_9DelayTypeEf", "Host delay feedback gain",
+          void, ss_ar_delay_feedback, void *delay, float gain) {
+    ss_ar_delay_gain(slot_get(delay),SS_AR_DELAY_FEEDBACK,gain);
+}
+HLE_FORCE("_ZN2nn5audio21SetDelayLowPassAmountEPNS0_9DelayTypeEf", "Host delay low-pass amount",
+          void, ss_ar_delay_lowpass, void *delay, float gain) {
+    ss_ar_delay_gain(slot_get(delay),SS_AR_DELAY_LOWPASS,gain);
+}
+HLE_FORCE("_ZN2nn5audio16IsDelayRemovableEPKNS0_9DelayTypeE", "Host delay removal state",
+          unsigned, ss_ar_delay_can_remove, const void *delay) {
+    return ss_ar_delay_removable(slot_get(delay));
+}
+HLE_FORCE("_ZN2nn5audio11RemoveDelayEPNS0_19AudioRendererConfigEPNS0_9DelayTypeEPNS0_10SubMixTypeE", "Release host delay",
+          void, ss_ar_delay_remove, void *config, void *delay, void *mix) {
+    (void)config; (void)mix;
+    ss_ar_delay *value=slot_get(delay);
+    if (!ss_ar_delay_removable(value)) die("Cannot remove an active delay");
+    ss_ar_remove_delay(value); slot_put(delay,NULL);
+}
+
 /* ---------- Voices ---------- */
 
 HLE_FORCE("_ZN2nn5audio16AcquireVoiceSlotEPNS0_19AudioRendererConfigEPNS0_9VoiceTypeEiiNS0_12SampleFormatEiPKvm", "Host voice",
           unsigned, ss_ar_voice_acquire, void *config, void *voice, int rate, int channels, int format, int priority, const void *parameter, size_t size) {
-    (void)priority; (void)parameter; (void)size;
-    if (format != SS_AR_FORMAT_PCM16) die("Audio voice sample format %d is not implemented", format);
+    (void)priority;
+    if (format != SS_AR_FORMAT_PCM16 && format != SS_AR_FORMAT_ADPCM) die("Audio voice sample format %d is not implemented", format);
     ss_ar_voice *value = ss_ar_acquire_voice(slot_get(config), rate, channels, format);
+    if (value && format == SS_AR_FORMAT_ADPCM) {
+        if (!parameter || size < 32) die("ADPCM voice requires sixteen coefficients");
+        ss_ar_voice_adpcm_parameters(value, parameter);
+    }
     slot_put(voice, value);
     return value != NULL;
 }
@@ -448,7 +521,7 @@ _Static_assert(sizeof(ss_guest_wavebuffer) == 0x30, "WaveBuffer ABI");
 
 HLE_FORCE("_ZN2nn5audio16AppendWaveBufferEPNS0_9VoiceTypeEPKNS0_10WaveBufferE", "Queue host voice data",
           unsigned, ss_ar_voice_append, void *voice, const ss_guest_wavebuffer *buffer) {
-    ss_ar_wavebuffer value = {buffer->buffer, buffer->size, buffer->start, buffer->end, buffer->loop != 0, buffer->end_of_stream != 0};
+    ss_ar_wavebuffer value = {buffer->buffer, buffer->size, buffer->start, buffer->end, buffer->loop != 0, buffer->end_of_stream != 0, buffer, buffer->context, buffer->context_size};
     return ss_ar_append(slot_get(voice), &value);
 }
 
@@ -458,4 +531,11 @@ HLE_FORCE("_ZN2nn5audio18GetWaveBufferCountEPKNS0_9VoiceTypeE", "Host voice stat
 
 HLE_FORCE("_ZN2nn5audio25GetVoicePlayedSampleCountEPKNS0_9VoiceTypeE", "Host voice status", int64_t, ss_ar_voice_played, const void *voice) {
     return ss_ar_played(slot_get(voice));
+}
+
+HLE_FORCE("_ZN2nn5audio21GetReleasedWaveBufferEPNS0_9VoiceTypeE", "Return consumed host voice buffers", const void *, ss_ar_released, void *voice) {
+    return ss_ar_released_buffer(slot_get(voice));
+}
+HLE_FORCE("_ZN2nn5audio17GetVoicePlayStateEPKNS0_9VoiceTypeE", "Read host voice state", int, ss_ar_play_state, const void *voice) {
+    return ss_ar_voice_play_state(slot_get(voice));
 }

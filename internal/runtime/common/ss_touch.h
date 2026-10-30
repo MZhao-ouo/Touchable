@@ -42,3 +42,7 @@ static inline int ss_touch_first(uint64_t hint) { return (int)(hint >> 8 & 0xff)
 static inline int ss_touch_second(uint64_t hint) { return (int)(hint >> 16 & 0xff); }
 static inline int ss_touch_extra(uint64_t hint) { return (int)(hint >> 24 & 0xff); }
 #endif
+
+/* One direct finger in the 1280 x 720 Switch touch space. Controls do not call this API. */
+void ss_touch_screen_set(int down, int x, int y);
+void ss_touch_screen_clear(void);

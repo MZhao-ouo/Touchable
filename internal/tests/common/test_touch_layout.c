@@ -8,6 +8,7 @@
 typedef struct { const char *name; double width, height, left, right, top, bottom, window; int pad; int tablet; } device;
 
 static const device devices[] = {
+    {"iPhone 16", 852, 393, 59, 59, 0, 20, 16, 0, 0},
     {"iPhone 16 Pro Max", 956, 440, 62, 62, 0, 21, 0, 0, 0},
     {"iPhone 16 Pro", 874, 402, 62, 62, 0, 21, 0, 0, 0},
     {"iPhone 13 mini", 812, 375, 50, 50, 0, 21, 0, 0, 0},

@@ -220,8 +220,8 @@ def stage_shaders(shader_root, shaders, chain, minimum_ios=None):
         if stale.name != 'b-' + chain:
             if stale.is_symlink() or not stale.is_dir(): stale.unlink()
             else: shutil.rmtree(stale)
-    shutil.copy2(shader_root / 'shader_map.tsv', shaders / 'shader_map.tsv')
-    shutil.copytree(source, shaders / 'ios' / f'b-{chain}', dirs_exist_ok=True)
+    shutil.copyfile(shader_root / 'shader_map.tsv', shaders / 'shader_map.tsv')
+    shutil.copytree(source, shaders / 'ios' / f'b-{chain}', dirs_exist_ok=True, copy_function=shutil.copyfile)
 
 
 def main():
@@ -271,8 +271,8 @@ def main():
         # Optional per-game shell settings from game.json "ios".
         info['CFBundleDevelopmentRegion'] = 'en'
         name_folders = stage_display_names(names, gen / 'Names')
-        if shell.get('touch_layout') not in (None, 'switch', 'rhythm'):
-            raise WorkspaceError('ios.touch_layout must be switch or rhythm.')
+        if shell.get('touch_layout') not in (None, 'switch', 'rhythm', 'native'):
+            raise WorkspaceError('ios.touch_layout must be switch, rhythm, or native.')
         if shell.get('touch_layout'): info['TouchableTouchLayout'] = shell['touch_layout']
         if shell.get('native_drawable'): info['TouchableNativeDrawable'] = True
         if shell_controller_haptics(shell): info['TouchableControllerHaptics'] = True
@@ -327,6 +327,7 @@ def main():
         resource_phase = obj('resources', f'isa=PBXResourcesBuildPhase; buildActionMask=2147483647; files={array(resource_build)}; runOnlyForDeploymentPostprocessing=0;')
         framework_phase = obj('frameworks', 'isa=PBXFrameworksBuildPhase; buildActionMask=2147483647; files=(); runOnlyForDeploymentPostprocessing=0;')
         frameworks = ['UIKit', 'Foundation', 'CoreGraphics', 'QuartzCore', 'Metal', 'AudioToolbox', 'AVFAudio', 'CoreHaptics', 'ImageIO', 'UniformTypeIdentifiers', 'GameController']
+        frameworks += list(game.frameworks)
         ldflags = flags + [v for framework in frameworks for v in ('-framework', framework)]
         common = {
             'SDKROOT': 'iphoneos', 'IPHONEOS_DEPLOYMENT_TARGET': game.minimum_ios_version, 'ARCHS': 'arm64',

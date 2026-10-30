@@ -24,10 +24,13 @@ struct ss_ar_mix {
 
 struct ss_ar_voice {
     ss_ar_renderer *owner;
-    int used, released, rate, channels;
+    int used, released, rate, channels, format;
+    int16_t coefficients[16], adpcm_history[2], loop_history[2];
     struct { int state; float pitch; ss_ar_mix *destination; float volume[SS_AR_CHANNELS][SS_AR_MIX_BUFFERS]; } client, server;
     ss_ar_wavebuffer pending[SS_AR_WAVEBUFFERS];
-    int pending_count, client_queued;
+    int pending_count, client_queued, outstanding;
+    const void *completed[SS_AR_WAVEBUFFERS];
+    int completed_head, completed_count;
     int64_t client_played;
     ss_ar_wavebuffer queue[SS_AR_WAVEBUFFERS];
     int queue_head, queue_count, in_buffer, ramp;
@@ -56,12 +59,23 @@ struct ss_ar_reverb {
     float room_state;
 };
 
+struct ss_ar_delay {
+    ss_ar_renderer *owner;
+    ss_ar_mix *mix;
+    int used, channels, capacity, position;
+    int64_t maximum_ns;
+    float *samples, filter[SS_AR_CHANNELS];
+    struct { int enabled, count; int8_t input[SS_AR_CHANNELS], output[SS_AR_CHANNELS]; int64_t ns; float gains[4]; } client, server;
+};
+
 struct ss_ar_renderer {
     pthread_mutex_t client_lock, server_lock;
     int rate, frame, voice_count, mix_count, mix_buffers, effect_count, buffers_used;
     ss_ar_voice *voices;
     ss_ar_mix *mixes;          /* [0] is the final mix */
     ss_ar_reverb *reverbs;
+    ss_ar_delay *delays;
+    int *effect_order, effect_active;
     struct { ss_ar_mix *mix; int count; int8_t input[SS_AR_CHANNELS]; float master; } client_sink, server_sink;
     float master_applied;
     int master_ramp;
@@ -84,7 +98,9 @@ ss_ar_renderer *ss_ar_create(int rate, int frame, int voices, int submixes, int 
     renderer->voices = calloc((size_t)voices + 1, sizeof(*renderer->voices));
     renderer->mixes = calloc((size_t)renderer->mix_count, sizeof(*renderer->mixes));
     renderer->reverbs = calloc((size_t)effects + 1, sizeof(*renderer->reverbs));
-    if (!renderer->voices || !renderer->mixes || !renderer->reverbs) { ss_ar_destroy(renderer); return NULL; }
+    renderer->delays = calloc((size_t)effects + 1, sizeof(*renderer->delays));
+    renderer->effect_order = calloc((size_t)effects + 1, sizeof(*renderer->effect_order));
+    if (!renderer->voices || !renderer->mixes || !renderer->reverbs || !renderer->delays || !renderer->effect_order) { ss_ar_destroy(renderer); return NULL; }
     pthread_mutex_init(&renderer->client_lock, NULL);
     pthread_mutex_init(&renderer->server_lock, NULL);
     renderer->client_sink.master = renderer->server_sink.master = renderer->master_applied = 1;
@@ -94,6 +110,8 @@ ss_ar_renderer *ss_ar_create(int rate, int frame, int voices, int submixes, int 
 void ss_ar_destroy(ss_ar_renderer *renderer) {
     if (!renderer) return;
     if (renderer->mixes) for (int i = 0; i < renderer->mix_count; ++i) free(renderer->mixes[i].samples);
+    if (renderer->delays) for (int i = 0; i < renderer->effect_count; ++i) free(renderer->delays[i].samples);
+    free(renderer->delays); free(renderer->effect_order);
     free(renderer->voices); free(renderer->mixes); free(renderer->reverbs);
     pthread_mutex_destroy(&renderer->client_lock);
     pthread_mutex_destroy(&renderer->server_lock);
@@ -144,7 +162,7 @@ void ss_ar_mix_volume(ss_ar_mix *mix, ss_ar_mix *destination, float volume, int 
 }
 
 ss_ar_voice *ss_ar_acquire_voice(ss_ar_renderer *renderer, int rate, int channels, int format) {
-    if (rate < 1000 || rate > 192000 || channels < 1 || channels > SS_AR_CHANNELS || format != SS_AR_FORMAT_PCM16) return NULL;
+    if (rate < 1000 || rate > 192000 || channels < 1 || channels > SS_AR_CHANNELS || (format != SS_AR_FORMAT_PCM16 && (format != SS_AR_FORMAT_ADPCM || channels != 1))) return NULL;
     pthread_mutex_lock(&renderer->client_lock);
     ss_ar_voice *voice = NULL;
     for (int i = 0; i < renderer->voice_count; ++i)
@@ -152,7 +170,7 @@ ss_ar_voice *ss_ar_acquire_voice(ss_ar_renderer *renderer, int rate, int channel
     if (voice) {
         pthread_mutex_lock(&renderer->server_lock);
         memset(voice, 0, sizeof(*voice));
-        voice->owner = renderer; voice->rate = rate; voice->channels = channels;
+        voice->owner = renderer; voice->rate = rate; voice->channels = channels; voice->format = format;
         voice->client.state = voice->server.state = SS_AR_STOPPED;
         voice->client.pitch = voice->server.pitch = 1;
         voice->phase = 1;
@@ -161,6 +179,13 @@ ss_ar_voice *ss_ar_acquire_voice(ss_ar_renderer *renderer, int rate, int channel
     }
     pthread_mutex_unlock(&renderer->client_lock);
     return voice;
+}
+
+void ss_ar_voice_adpcm_parameters(ss_ar_voice *voice, const int16_t coefficients[16]) {
+    if (!voice || !coefficients) return;
+    pthread_mutex_lock(&voice->owner->server_lock);
+    memcpy(voice->coefficients, coefficients, sizeof(voice->coefficients));
+    pthread_mutex_unlock(&voice->owner->server_lock);
 }
 
 void ss_ar_release_voice(ss_ar_voice *voice) {
@@ -202,13 +227,36 @@ void ss_ar_voice_volume(ss_ar_voice *voice, ss_ar_mix *destination, float volume
 int ss_ar_append(ss_ar_voice *voice, const ss_ar_wavebuffer *buffer) {
     if (!voice || !buffer) return 0;
     pthread_mutex_lock(&voice->owner->client_lock);
-    int accepted = voice->client_queued < SS_AR_WAVEBUFFERS && voice->pending_count < SS_AR_WAVEBUFFERS;
+    int accepted = voice->client_queued < SS_AR_WAVEBUFFERS && voice->pending_count < SS_AR_WAVEBUFFERS && (!buffer->tag || voice->outstanding < SS_AR_WAVEBUFFERS);
     if (accepted) {
         voice->pending[voice->pending_count++] = *buffer;
         ++voice->client_queued;
+        if (buffer->tag) ++voice->outstanding;
     }
     pthread_mutex_unlock(&voice->owner->client_lock);
     return accepted;
+}
+
+const void *ss_ar_released_buffer(ss_ar_voice *voice) {
+    if (!voice) return NULL;
+    pthread_mutex_lock(&voice->owner->client_lock);
+    pthread_mutex_lock(&voice->owner->server_lock);
+    const void *result = NULL;
+    if (voice->completed_count) {
+        result = voice->completed[voice->completed_head];
+        voice->completed_head = (voice->completed_head + 1) % SS_AR_WAVEBUFFERS;
+        --voice->completed_count; --voice->outstanding;
+    }
+    pthread_mutex_unlock(&voice->owner->server_lock);
+    pthread_mutex_unlock(&voice->owner->client_lock);
+    return result;
+}
+int ss_ar_voice_play_state(ss_ar_voice *voice) {
+    if (!voice) return SS_AR_STOPPED;
+    pthread_mutex_lock(&voice->owner->client_lock);
+    int state = voice->client.state;
+    pthread_mutex_unlock(&voice->owner->client_lock);
+    return state;
 }
 
 int ss_ar_queued(const ss_ar_voice *voice) {
@@ -228,11 +276,11 @@ int64_t ss_ar_played(const ss_ar_voice *voice) {
 }
 
 ss_ar_reverb *ss_ar_add_reverb(ss_ar_renderer *renderer, ss_ar_mix *mix, int channels) {
-    if (!mix || channels < 1 || channels > 2) return NULL;
+    if (!mix || channels < 1 || channels > SS_AR_CHANNELS) return NULL;
     pthread_mutex_lock(&renderer->client_lock);
     ss_ar_reverb *reverb = NULL;
     for (int i = 0; i < renderer->effect_count; ++i)
-        if (!renderer->reverbs[i].used) { reverb = &renderer->reverbs[i]; break; }
+        if (!renderer->reverbs[i].used && !renderer->delays[i].used) { reverb = &renderer->reverbs[i]; break; }
     if (reverb) {
         pthread_mutex_lock(&renderer->server_lock);
         memset(reverb, 0, sizeof(*reverb));
@@ -241,6 +289,7 @@ ss_ar_reverb *ss_ar_add_reverb(ss_ar_renderer *renderer, ss_ar_mix *mix, int cha
         ss_ar_i3dl2 defaults = {-10000, 0, 1.0f, 0.5f, -10000, 0.02f, -10000, 0.04f, 100, 100, 5000, 1};
         reverb->client.params = reverb->server.params = defaults;
         reverb->used = 1;
+        renderer->effect_order[renderer->effect_active++] = (int)(reverb - renderer->reverbs);
         pthread_mutex_unlock(&renderer->server_lock);
     }
     pthread_mutex_unlock(&renderer->client_lock);
@@ -287,11 +336,14 @@ void ss_ar_master_volume(ss_ar_renderer *renderer, float volume) {
 
 /* ---------- Server ---------- */
 
+static void finish_buffer(ss_ar_voice *voice);
 static void voice_reset(ss_ar_voice *voice) {
+    while (voice->queue_count) finish_buffer(voice);
     voice->queue_head = voice->queue_count = voice->in_buffer = voice->ramp = 0;
     voice->position = voice->played = 0;
     voice->phase = 1;
     memset(voice->history, 0, sizeof(voice->history));
+    memset(voice->adpcm_history, 0, sizeof(voice->adpcm_history));
 }
 
 static int mix_depth(ss_ar_mix *mix) {
@@ -308,6 +360,9 @@ void ss_ar_update(ss_ar_renderer *renderer) {
         ss_ar_voice *voice = &renderer->voices[i];
         if (!voice->used) continue;
         if (voice->released) { voice->used = 0; voice->released = 0; continue; }
+        for (int k = 0; k < voice->pending_count && voice->queue_count < SS_AR_WAVEBUFFERS; ++k)
+            voice->queue[(voice->queue_head + voice->queue_count++) % SS_AR_WAVEBUFFERS] = voice->pending[k];
+        voice->pending_count = 0;
         int old_state = voice->server.state, new_state = voice->client.state;
         if (new_state == SS_AR_STOPPED && old_state != SS_AR_STOPPED) voice_reset(voice);
         if (new_state == SS_AR_STARTED && old_state == SS_AR_STOPPED) voice->ramp = 0;
@@ -316,9 +371,6 @@ void ss_ar_update(ss_ar_renderer *renderer) {
         if (voice->server.destination != voice->client.destination) voice->ramp = 0;
         voice->server.destination = voice->client.destination;
         memcpy(voice->server.volume, voice->client.volume, sizeof(voice->server.volume));
-        for (int k = 0; k < voice->pending_count && voice->queue_count < SS_AR_WAVEBUFFERS; ++k)
-            voice->queue[(voice->queue_head + voice->queue_count++) % SS_AR_WAVEBUFFERS] = voice->pending[k];
-        voice->pending_count = 0;
         voice->client_queued = voice->queue_count;
         voice->client_played = voice->played;
     }
@@ -332,17 +384,40 @@ void ss_ar_update(ss_ar_renderer *renderer) {
         if (renderer->mixes[i].used) renderer->mixes[i].depth = mix_depth(&renderer->mixes[i]);
     for (int i = 0; i < renderer->effect_count; ++i)
         if (renderer->reverbs[i].used) renderer->reverbs[i].server = renderer->reverbs[i].client;
+    for (int i = 0; i < renderer->effect_count; ++i)
+        if (renderer->delays[i].used) renderer->delays[i].server = renderer->delays[i].client;
     renderer->server_sink = renderer->client_sink;
     pthread_mutex_unlock(&renderer->server_lock);
     pthread_mutex_unlock(&renderer->client_lock);
 }
 
 static void finish_buffer(ss_ar_voice *voice) {
+    const void *tag = voice->queue[voice->queue_head].tag;
+    if (tag) voice->completed[(voice->completed_head + voice->completed_count++) % SS_AR_WAVEBUFFERS] = tag;
     int end_of_stream = voice->queue[voice->queue_head].end_of_stream;
     voice->queue_head = (voice->queue_head + 1) % SS_AR_WAVEBUFFERS;
     --voice->queue_count;
     voice->in_buffer = 0;
     if (end_of_stream) voice->played = 0;
+}
+
+/* DSP ADPCM: each eight-byte frame contains a predictor/scale and fourteen signed nibbles. */
+static int16_t decode_adpcm(ss_ar_voice *voice, const uint8_t *data, int64_t position) {
+    const uint8_t *block = data + position / 14 * 8;
+    int nibble = (int)(position % 14);
+    unsigned predictor = block[0] >> 4;
+    if (predictor > 7) predictor = 7;
+    int value = (block[1 + nibble / 2] >> (nibble % 2 ? 0 : 4)) & 15;
+    if (value >= 8) value -= 16;
+    int64_t sample = (int64_t)value * (1 << (block[0] & 15)) * 2048 + 1024;
+    sample += (int64_t)voice->coefficients[predictor * 2] * voice->adpcm_history[0];
+    sample += (int64_t)voice->coefficients[predictor * 2 + 1] * voice->adpcm_history[1];
+    sample >>= 11;
+    if (sample > 32767) sample = 32767;
+    if (sample < -32768) sample = -32768;
+    voice->adpcm_history[1] = voice->adpcm_history[0];
+    voice->adpcm_history[0] = (int16_t)sample;
+    return (int16_t)sample;
 }
 
 /* Read the next source frame into history slot 3. Silence when the queue is empty. */
@@ -354,15 +429,29 @@ static void fetch(ss_ar_voice *voice) {
     }
     while (voice->queue_count) {
         const ss_ar_wavebuffer *buffer = &voice->queue[voice->queue_head];
-        int64_t frames = buffer->data ? (int64_t)(buffer->size / (2u * (unsigned)channels)) : 0;
+        int adpcm = voice->format == SS_AR_FORMAT_ADPCM;
+        int64_t frames = !buffer->data ? 0 : adpcm ? (int64_t)(buffer->size / 8 * 14) : (int64_t)(buffer->size / (2u * (unsigned)channels));
         int64_t end = buffer->end < frames ? buffer->end : frames, start = buffer->start;
         if (start < 0 || start >= end) { finish_buffer(voice); continue; }
-        if (!voice->in_buffer) { voice->position = start; voice->in_buffer = 1; }
-        const int16_t *frame = buffer->data + voice->position * channels;
-        for (int c = 0; c < channels; ++c) voice->history[c][3] = frame[c] * (1.0f / 32768);
+        if (!voice->in_buffer) {
+            voice->position = start; voice->in_buffer = 1;
+            if (adpcm) {
+                if (buffer->context && buffer->context_size >= 6)
+                    memcpy(voice->adpcm_history, buffer->context + 1, sizeof(voice->adpcm_history));
+                memcpy(voice->loop_history, voice->adpcm_history, sizeof(voice->loop_history));
+            }
+        }
+        if (adpcm) voice->history[0][3] = decode_adpcm(voice, (const uint8_t *)buffer->data, voice->position) * (1.0f / 32768);
+        else {
+            const int16_t *frame = buffer->data + voice->position * channels;
+            for (int c = 0; c < channels; ++c) voice->history[c][3] = frame[c] * (1.0f / 32768);
+        }
         ++voice->played;
         if (++voice->position >= end) {
-            if (buffer->loop) voice->position = start;
+            if (buffer->loop) {
+                voice->position = start;
+                if (adpcm) memcpy(voice->adpcm_history, voice->loop_history, sizeof(voice->adpcm_history));
+            }
             else finish_buffer(voice);
         }
         return;
@@ -520,6 +609,95 @@ static void reverb_process(ss_ar_reverb *reverb) {
     }
 }
 
+/* Delay lines share effect slots with reverbs, preserving allocation order. */
+ss_ar_delay *ss_ar_add_delay(ss_ar_renderer *r, ss_ar_mix *mix, int channels, int64_t maximum_ns) {
+    if (!mix || mix->owner != r || channels < 1 || channels > SS_AR_CHANNELS || maximum_ns < 1 || maximum_ns > 8000000000ll) return NULL;
+    int capacity = (int)(maximum_ns * r->rate / 1000000000ll) + 1;
+    float *samples = calloc((size_t)capacity * channels, sizeof(float));
+    if (!samples) return NULL;
+    pthread_mutex_lock(&r->client_lock);
+    pthread_mutex_lock(&r->server_lock);
+    ss_ar_delay *delay = NULL;
+    for (int i = 0; i < r->effect_count; ++i) if (!r->delays[i].used && !r->reverbs[i].used) { delay=&r->delays[i]; break; }
+    if (delay) {
+        memset(delay, 0, sizeof(*delay));
+        delay->owner=r; delay->mix=mix; delay->channels=channels; delay->capacity=capacity;
+        delay->maximum_ns=maximum_ns; delay->samples=samples; delay->used=1;
+        delay->client.gains[SS_AR_DELAY_INPUT]=delay->client.gains[SS_AR_DELAY_DRY]=1;
+        delay->server=delay->client;
+        r->effect_order[r->effect_active++] = (int)(delay - r->delays);
+    } else free(samples);
+    pthread_mutex_unlock(&r->server_lock);
+    pthread_mutex_unlock(&r->client_lock);
+    return delay;
+}
+void ss_ar_delay_io(ss_ar_delay *d, const int8_t *input, const int8_t *output, int count) {
+    if (!d || count < 0 || count > d->channels) return;
+    for (int i=0;i<count;++i) if (input[i]<0 || input[i]>=d->mix->buffers || output[i]<0 || output[i]>=d->mix->buffers) return;
+    pthread_mutex_lock(&d->owner->client_lock);
+    d->client.count=count;
+    memcpy(d->client.input,input,(size_t)count); memcpy(d->client.output,output,(size_t)count);
+    pthread_mutex_unlock(&d->owner->client_lock);
+}
+void ss_ar_delay_enable(ss_ar_delay *d, int enabled) {
+    if (!d) return;
+    pthread_mutex_lock(&d->owner->client_lock); d->client.enabled=enabled!=0; pthread_mutex_unlock(&d->owner->client_lock);
+}
+void ss_ar_delay_set_time(ss_ar_delay *d, int64_t ns) {
+    if (!d) return;
+    pthread_mutex_lock(&d->owner->client_lock); d->client.ns=ns<0?0:ns>d->maximum_ns?d->maximum_ns:ns; pthread_mutex_unlock(&d->owner->client_lock);
+}
+int64_t ss_ar_delay_time(ss_ar_delay *d) {
+    if (!d) return 0;
+    pthread_mutex_lock(&d->owner->client_lock); int64_t ns=d->client.ns; pthread_mutex_unlock(&d->owner->client_lock); return ns;
+}
+void ss_ar_delay_gain(ss_ar_delay *d, int kind, float gain) {
+    if (!d || kind<0 || kind>SS_AR_DELAY_LOWPASS) return;
+    pthread_mutex_lock(&d->owner->client_lock); d->client.gains[kind]=clampf(gain,0,1); pthread_mutex_unlock(&d->owner->client_lock);
+}
+int ss_ar_delay_removable(ss_ar_delay *d) {
+    if (!d) return 1;
+    pthread_mutex_lock(&d->owner->server_lock); int ready=!d->server.enabled; pthread_mutex_unlock(&d->owner->server_lock); return ready;
+}
+void ss_ar_remove_delay(ss_ar_delay *d) {
+    if (!d) return;
+    ss_ar_renderer *r=d->owner;
+    pthread_mutex_lock(&r->client_lock); pthread_mutex_lock(&r->server_lock);
+    if (!d->server.enabled) {
+        int slot=(int)(d-r->delays);
+        for (int i=0;i<r->effect_active;++i) if (r->effect_order[i]==slot) {
+            memmove(&r->effect_order[i],&r->effect_order[i+1],(size_t)(r->effect_active-i-1)*sizeof(*r->effect_order));
+            --r->effect_active;
+            break;
+        }
+        free(d->samples); memset(d,0,sizeof(*d));
+    }
+    pthread_mutex_unlock(&r->server_lock); pthread_mutex_unlock(&r->client_lock);
+}
+static void delay_process(ss_ar_delay *d) {
+    int frames=d->owner->frame, channels=d->server.count;
+    int lag=(int)(d->server.ns*d->owner->rate/1000000000ll);
+    if (lag<1) lag=1;
+    if (lag>=d->capacity) lag=d->capacity-1;
+    for (int i=0;i<frames;++i) {
+        float input[SS_AR_CHANNELS];
+        for (int c=0;c<channels;++c) input[c]=d->mix->samples[(size_t)d->server.input[c]*frames+i];
+        int read=(d->position+d->capacity-lag)%d->capacity;
+        for (int c=0;c<channels;++c) {
+            float output=input[c];
+            if (d->server.enabled) {
+                float delayed=d->samples[(size_t)c*d->capacity+read];
+                float lowpass=d->server.gains[SS_AR_DELAY_LOWPASS];
+                d->filter[c]=(1-lowpass)*delayed+lowpass*d->filter[c];
+                d->samples[(size_t)c*d->capacity+d->position]=input[c]*d->server.gains[SS_AR_DELAY_INPUT]+d->filter[c]*d->server.gains[SS_AR_DELAY_FEEDBACK];
+                output=input[c]*d->server.gains[SS_AR_DELAY_DRY]+d->filter[c];
+            }
+            d->mix->samples[(size_t)d->server.output[c]*frames+i]=output;
+        }
+        if (d->server.enabled && ++d->position>=d->capacity) d->position=0;
+    }
+}
+
 /* ---------- Frame ---------- */
 
 static void send_mix(ss_ar_renderer *renderer, ss_ar_mix *mix) {
@@ -537,8 +715,11 @@ static void send_mix(ss_ar_renderer *renderer, ss_ar_mix *mix) {
 }
 
 static void process_effects(ss_ar_renderer *renderer, ss_ar_mix *mix) {
-    for (int i = 0; i < renderer->effect_count; ++i)
+    for (int rank = 0; rank < renderer->effect_active; ++rank) {
+        int i = renderer->effect_order[rank];
         if (renderer->reverbs[i].used && renderer->reverbs[i].mix == mix) reverb_process(&renderer->reverbs[i]);
+        else if (renderer->delays[i].used && renderer->delays[i].mix == mix) delay_process(&renderer->delays[i]);
+    }
 }
 
 static int16_t pcm16(float value) {

@@ -7,7 +7,11 @@ NVN(nvnColorStateSetLogicOp, void, NVNcolorState *state, NVNlogicOp operation) {
     ((color_st *)state)->logic_op = operation;
 }
 NVN(nvnColorStateSetAlphaTest, void, NVNcolorState *state, NVNalphaFunc function) {
+#ifdef SS_NVN_ALPHA_TEST
+    if (function < NVN_ALPHA_FUNC_NEVER || function > NVN_ALPHA_FUNC_ALWAYS) die("Invalid alpha function: %d", function);
+#else
     if (function != NVN_ALPHA_FUNC_ALWAYS) die("Fixed alpha test needs a shader variant: %d", function);
+#endif
     ((color_st *)state)->alpha_func = function;
 }
 void ss_mtl_write_texels(const tex_t *, unsigned, unsigned, const NVNcopyRegion *, const void *, size_t, size_t);
@@ -38,6 +42,10 @@ static void ss_write_texels(const tex_t *texture, const view_t *view, const NVNc
         uint32_t row_bytes, rows, slices, block_bytes; uint64_t base; unsigned tile_h, tile_d;
         if (nvn_deswizzle_geom(&texture->d, level, slice, &row_bytes, &rows, &slices, &base, &tile_h, &tile_d, &block_bytes))
             die("Unsupported texture CPU write layout: target=%d flags=%#x", texture->d.target, texture->d.flags);
+        if (texture->L.tileW) {
+            uint32_t alignment = 64u << texture->L.tileW;
+            row_bytes = (row_bytes + alignment - 1) & ~(alignment - 1);
+        }
         if (depth >= slices) die("Texture CPU write exceeds depth");
         for (unsigned y = 0; y < count; ++y) {
             const uint8_t *input = (const uint8_t *)source + z * image_stride + y * row_stride;

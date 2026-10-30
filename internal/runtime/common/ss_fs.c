@@ -90,3 +90,7 @@ HLE_FORCE("_ZN2nn2fs16GetFreeSpaceSizeEPlPKc", "Read available storage", Result,
 HLE_FORCE("_ZN2nn2fs20GetRamDiskBufferSizeEm", "Temporary storage uses host files", size_t, ss_fs_ram_size, size_t size) { (void)size; return 4096; }
 HLE_FORCE("_ZN2nn2fs12MountRamDiskEPKcPvm", "Temporary storage uses host files", Result, ss_fs_ram_mount, const char *name, void *data, size_t size) { (void)data; (void)size; return h_fs_MountTemp(name); }
 
+/* SDK 14.3 also exports this entry point. Keep the same atomic transaction. */
+HLE_FORCE("_ZN2nn2fs14CommitSaveDataEPKc", "Commit through the host save transaction", Result, ss_fs_commit_save, const char *name) {
+    return h_fs_Commit(name);
+}

@@ -1,0 +1,1 @@
+Synthetic media fixtures only. red.h264 is a 32x32 red H264 frame. sine.aac is a 48kHz stereo 440Hz sine. bframes.h264 is 12 frames of 32x32 testsrc2 with two B frames. bframes.packets contains little-endian int64 PTS(us), uint32 byte count, then AVCC bytes per packet. Generated with ffmpeg/ffprobe. No game media is included.

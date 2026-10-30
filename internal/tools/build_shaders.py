@@ -24,6 +24,12 @@ def run(args):
     return result.stdout
 
 
+def metal_target_options(sdk, minimum="26.0"):
+    # Match the runtime's OS 26 floor even when building with a newer Xcode.
+    deployment = {'macosx': '-mmacosx-version-min=', 'iphoneos': '-mios-version-min='}
+    return ['-std=metal4.0', deployment[sdk] + minimum]
+
+
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -62,7 +68,7 @@ def tool_fingerprint(config):
     for sdk in ('macosx', 'iphoneos'):
         fingerprint[sdk] = run(['xcrun', '-sdk', sdk, 'metal', '--version']).strip()
     fingerprint['targets'] = json.dumps(metal_targets(config), sort_keys=True)
-    options = {key: config.profile[key] for key in ('nvn_window_origin', 'vertex_attribute_types', 'nvn_bindings', 'shader_functional_aliases', 'shader_exefs') if key in config.profile}
+    options = {key: config.profile[key] for key in ('nvn_window_origin', 'vertex_attribute_types', 'nvn_bindings', 'shader_functional_aliases', 'shader_exefs', 'nvn_alpha_test') if key in config.profile}
     if options:
         fingerprint['options'] = json.dumps(options, sort_keys=True)
     return fingerprint
@@ -197,6 +203,38 @@ def reflection(job, source, resources, chain):
                 drv_reads=reads, notes=resources['notes'])
 
 
+def alpha_test_source(source):
+    """Add NVN alpha comparison to a SPIRV-Cross fragment output, before return."""
+    entry = re.search(r'fragment\s+(\w+)\s+main0\((.*?)\)\s*\{', source, re.S)
+    if not entry or re.search(r'\[\[buffer\(30\)\]\]', source):
+        raise ValueError('Unsupported fragment alpha-test interface.')
+    output = re.search(r'struct\s+' + re.escape(entry[1]) + r'\s*\{(.*?)\};', source, re.S)
+    if not output:
+        raise ValueError('Fragment alpha test requires an output structure.')
+    color = re.search(r'float4\s+(\w+)\s*\[\[color\(0\)\]\]', output[1])
+    body = source[entry.end():]
+    if 'return out;' not in body:
+        raise ValueError('Fragment alpha test requires a named output return.')
+    comparison = 'ss_alpha_pass(out.' + color[1] + '.w, uint(ss_alpha.x), ss_alpha.y)' if color else '(uint(ss_alpha.x) != 1u)'
+    body = body.replace('return out;', 'if (!(' + comparison + ')) discard_fragment();\n    return out;')
+    signature = source[:entry.end(2)] + (', ' if entry[2].strip() else '') + 'constant float2& ss_alpha [[buffer(30)]]' + source[entry.end(2):entry.end()]
+    predicate = """
+inline bool ss_alpha_pass(float a, uint op, float r) {
+    switch (op) {
+        case 1: return false;
+        case 2: return a < r;
+        case 3: return a == r;
+        case 4: return a <= r;
+        case 5: return a > r;
+        case 6: return a != r;
+        case 7: return a >= r;
+        default: return true;
+    }
+}
+"""
+    return signature[:entry.start()] + predicate + signature[entry.start():] + body
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--game', default='silksong', help='Registered game ID.')
@@ -224,6 +262,9 @@ def main():
     lower_left = origin == 'lower-left'
     if lower_left != ('SS_NVN_LOWER_LEFT_ORIGIN' in config.compile_defines):
         raise GameError('profile.nvn_window_origin lower-left requires the SS_NVN_LOWER_LEFT_ORIGIN compile define, and only it.')
+    alpha_test = config.profile.get('nvn_alpha_test', False)
+    if not isinstance(alpha_test, bool) or alpha_test != ('SS_NVN_ALPHA_TEST' in config.compile_defines):
+        raise GameError('profile.nvn_alpha_test must match SS_NVN_ALPHA_TEST.')
     code_key = 'SS_SHADER_KEY_CODE' in config.compile_defines
     jobs = [shader_job(path, work, code_key) for path in controls]
     # Integer vertex inputs must be declared with their type, or Metal rejects the pipeline.
@@ -262,6 +303,9 @@ def main():
         run([SPIRV, '--msl', '--msl-version', '20300', '--msl-argument-buffers', '--msl-texture-buffer-native',
              '--msl-pad-fragment-output', *flip, work/f'{key}.spv', '--output', msl])
         source = msl.read_text()
+        if alpha_test and job['stage'] == 'ps':
+            source = alpha_test_source(source)
+            msl.write_text(source)
         resources = json.loads((work/f'{key}.res.json').read_text())
         refl = reflection(job, source, resources, chain)
         targets = metal_targets(config)
@@ -269,8 +313,7 @@ def main():
             target = out/name/f'b-{chain}'
             target.mkdir(parents=True, exist_ok=True)
             air = work/f'{key}.{name}.air'
-            version_flag = {'macosx': '-mmacosx-version-min=', 'iphoneos': '-mios-version-min='}[sdk] + targets[sdk]
-            run(['xcrun', '-sdk', sdk, 'metal', version_flag, '-c', msl, '-o', air])
+            run(['xcrun', '-sdk', sdk, 'metal', *metal_target_options(sdk, targets[sdk]), '-c', msl, '-o', air])
             run(['xcrun', '-sdk', sdk, 'metallib', air, '-o', target/f'{key}_b.metallib'])
             check_metallib(target/f'{key}_b.metallib', sdk, targets[sdk])
             (target/f'{key}_b.json').write_text(json.dumps(refl, indent=2)+'\n')

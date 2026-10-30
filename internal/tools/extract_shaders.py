@@ -103,8 +103,74 @@ def extract_bnsh(config, romfs, output):
     print('Added:', len(added), 'Verified:', len(verified), 'Total:', len(verified | added))
 
 
+def embedded_stages(blob):
+    """Validate Hayarigami's contiguous control, instruction and constant records."""
+    records, position = [], 0
+    while True:
+        offset = blob.find(bytes.fromhex('34127698'), position)
+        if offset < 0:
+            break
+        if len(blob)-offset < 0x880:
+            raise GameError('Truncated embedded shader control.')
+        control = blob[offset:offset+0x880]
+        if struct.unpack_from('<9I', control) != (0x98761234, 1, 0x10, 0x120, 0xb, 0x878, 0, 0, 0x880):
+            raise GameError('Unsupported embedded shader control header.')
+        instructions, constants, constant_start, total, start = struct.unpack_from('<5I', control, 0x6f8)
+        if (start != 0x30 or instructions < 0x50 or instructions % 8 or
+                constant_start != (start+instructions+255) & ~255 or
+                total != (constant_start+constants+255) & ~255 or total > 4*1024*1024):
+            raise GameError('Invalid embedded shader lengths.')
+        if total > len(blob)-offset-0x880:
+            raise GameError('Truncated embedded shader code.')
+        code = blob[offset+0x880:offset+0x880+total]
+        selector = struct.unpack_from('<I', control, 0x714)[0]
+        sph = (struct.unpack_from('<I', code, start)[0] >> 10) & 15
+        if code[:4] != bytes.fromhex('78563412') or {0: 1, 1: 5, 2: 4}.get(selector) != sph:
+            raise GameError('Embedded shader stage or code header mismatch.')
+        records.append(dict(control=control, code=code, stage=selector, offset=offset))
+        position = offset+0x880+total
+    if not records:
+        raise GameError('No embedded NVN shaders found.')
+    return records
+
+
+def extract_embedded(config, output):
+    from analyze_game import load_nso
+    name = config.profile.get('shader_exefs')
+    if name not in config.module_names:
+        raise GameError('profile.shader_exefs must name an executable module.')
+    module = load_nso(config.content_dir/'ExeFS'/name, include_image=True)
+    expected = config.profile['modules'][name]
+    if any(module[k] != expected[k] for k in ('sha256', 'build_id')):
+        raise GameError('Embedded shader module does not match its profile.')
+    records = embedded_stages(module['image'])
+    output.mkdir(parents=True, exist_ok=True)
+    summary, added, unsupported = [], set(), []
+    for record in records:
+        key = shader_key(config, record['control'], record['code'])
+        row = dict(source=name, offset=record['offset'], key=key, stage=record['stage'])
+        if record['stage'] == 2:
+            row['reason'] = 'Geometry translation is unsupported. Do not bind this stage.'
+            unsupported.append(row)
+            continue
+        target = output/(key+'.control')
+        if target.exists():
+            if target.read_bytes() != record['control'] or target.with_suffix('.code').read_bytes() != record['code']:
+                raise GameError('Embedded shader key collision: '+key)
+        else:
+            target.with_suffix('.code').write_bytes(record['code'])
+            target.write_bytes(record['control'])
+            added.add(key)
+        summary.append(row)
+    report = dict(game_id=config.id, module_sha256=module['sha256'], records=summary, unsupported=unsupported)
+    (output.parent/'asset-shaders.json').write_text(json.dumps(report, indent=2)+'\n')
+    print('Embedded shader records:',len(records),'supported:',len(summary),'unsupported:',len(unsupported),'added:',len(added))
+
+
 def extract(config, data_dir, output):
     adapter = config.require_adapted('shader_extract')
+    if adapter == 'hayarigami-nvn':
+        return extract_embedded(config, output)
     if adapter == 'nn-gfx-bnsh':
         return extract_bnsh(config, config.content_dir / 'RomFS', output)
     if adapter != 'unity-switch':

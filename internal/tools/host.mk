@@ -6,7 +6,7 @@ ifeq ($(wildcard $(CONFIG)),)
 $(error Run bash tools/build_host.sh --game $(GAME) first)
 endif
 include $(CONFIG)
-FRAMEWORKS = Cocoa QuartzCore Metal AudioToolbox ImageIO UniformTypeIdentifiers GameController
+FRAMEWORKS = Cocoa QuartzCore Metal AudioToolbox ImageIO UniformTypeIdentifiers GameController $(GAME_FRAMEWORKS)
 
 all: $(HOST_OUTPUT)
 $(HOST_OUTPUT): $(OBJECTS) tools/host.mk $(CONFIG)

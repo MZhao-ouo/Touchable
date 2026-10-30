@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "id": "hayarigami",
+  "display_name": "流行之神",
+  "product_name": "Hayarigami",
+  "bundle_id": "com.guiyu.TouchableHayarigami",
+  "build_version": 12,
+  "title_id": "010095b01af94000",
+  "profile": "profile.json",
+  "status": "in-progress",
+  "save_namespace": "hayarigami",
+  "module_names": [
+    "main",
+    "subsdk0",
+    "sdk"
+  ],
+  "runtime_sources": [
+    "runtime/hy_game.c",
+    "runtime/hy_media.m"
+  ],
+  "common_runtime_sources": [
+    "runtime/common/ss_host.c",
+    "runtime/common/ss_thread.c",
+    "runtime/common/ss_diagnostics.c",
+    "runtime/common/ss_indirect_branch.c",
+    "runtime/common/ss_relr.c",
+    "runtime/common/ss_time.c",
+    "runtime/common/ss_platform.c",
+    "runtime/common/ss_fs.c",
+    "runtime/common/ss_ro.c",
+    "runtime/common/ss_net.c",
+    "runtime/common/ss_input.c",
+    "runtime/common/ss_pointer.c",
+    "runtime/common/ss_haptics.c",
+    "runtime/common/ss_health_bars.c",
+    "runtime/common/ss_display.c",
+    "runtime/common/ss_shader_capture.c",
+    "runtime/common/ss_audio.c",
+    "runtime/common/ss_log.c",
+    "runtime/common/ss_audren.c",
+    "runtime/common/ss_audio_renderer.c",
+    "runtime/common/ss_services.c"
+  ],
+  "ios_sources": [],
+  "compile_defines": [
+    "TOUCHABLE_SWITCH_RUNTIME",
+    "SS_SHADER_KEY_CODE",
+    "SS_GUEST_LARGE_HEAP",
+    "SS_NVN_ALPHA_TEST"
+  ],
+  "adapters": {
+    "runtime": "hayarigami",
+    "ios": "switch",
+    "rewrite": "switch-native",
+    "shader_extract": "hayarigami-nvn",
+    "shader_build": "nvn"
+  },
+  "ios": {
+    "deployment_target": "26.0",
+    "touch_layout": "native",
+    "localizations": [
+      "zh-Hans",
+      "zh-Hant",
+      "ja",
+      "en"
+    ]
+  },
+  "host": {
+    "deployment_target": "26.0"
+  },
+  "save_directory": "Hayarigami",
+  "common_ios_sources": [
+    "platform/ios/App.m",
+    "platform/ios/Haptics.m"
+  ],
+  "frameworks": [
+    "VideoToolbox",
+    "CoreMedia",
+    "CoreVideo"
+  ]
+}

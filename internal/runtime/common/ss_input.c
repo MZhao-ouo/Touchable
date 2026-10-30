@@ -1,5 +1,6 @@
 #include "hle.h"
 #include <stdatomic.h>
+#include <pthread.h>
 #include "ss_haptics.h"
 #include "ss_touch.h"
 
@@ -173,11 +174,65 @@ HLE_FORCE("_ZN2nn3hid16GetGestureStatesEPNS0_12GestureStateEi", "No native Switc
 HLE_FORCE("_ZN2nn3hid17GetDebugPadStatesEPNS0_13DebugPadStateEi", "No development controller", int, ss_debug_states, void *out, int count) { (void)out; (void)count; return 0; }
 HLE_FORCE("_ZN2nn3hid16GetDebugPadStateEPNS0_13DebugPadStateE", "No development controller", void, ss_debug_state, void *out) { memset(out, 0, 0x20); }
 
-/* Phone touch controls are translated to controller buttons. The game does
- * not receive raw touches on top of the virtual controller. */
+/* Switch touchscreen ABI. See switchbrew/libnx services/hid.h, HidTouchState.
+ * Only the dedicated native screen surface writes contacts. Other layouts stay empty. */
+typedef struct {
+    uint64_t delta_time;
+    uint32_t attributes, finger_id, x, y, diameter_x, diameter_y, rotation, reserved;
+} ss_screen_point;
+typedef struct { int64_t sample; int32_t count; uint32_t reserved; ss_screen_point point; } ss_screen_state;
+_Static_assert(sizeof(ss_screen_point) == 40, "Touch point ABI");
+_Static_assert(sizeof(ss_screen_state) == 56, "Single touch state ABI");
+static pthread_mutex_t screen_lock = PTHREAD_MUTEX_INITIALIZER;
+static ss_screen_state screen_live, screen_queue[32];
+static unsigned screen_head, screen_count;
+static uint64_t screen_sample, screen_time;
+
+void ss_touch_screen_clear(void) {
+    pthread_mutex_lock(&screen_lock);
+    screen_live = (ss_screen_state){0};
+    screen_head = screen_count = 0;
+    pthread_mutex_unlock(&screen_lock);
+}
+void ss_touch_screen_set(int down, int x, int y) {
+    pthread_mutex_lock(&screen_lock);
+    x = x < 0 ? 0 : x > 1279 ? 1279 : x;
+    y = y < 0 ? 0 : y > 719 ? 719 : y;
+    int was_down = screen_live.count;
+    screen_live.point = (ss_screen_point){.x=x, .y=y, .diameter_x=8, .diameter_y=8};
+    if (!!down != !!was_down) {
+        /* Keep both edges when a tap ends between two game polls. Movement needs no backlog. */
+        ss_screen_state edge = screen_live;
+        edge.count = 1;
+        edge.point.attributes = down ? 1 : 2;
+        if (screen_count == 32) { screen_head = (screen_head + 1) % 32; --screen_count; }
+        screen_queue[(screen_head + screen_count++) % 32] = edge;
+    }
+    screen_live.count = !!down;
+    pthread_mutex_unlock(&screen_lock);
+}
+static void screen_read(void *out, int capacity) {
+    pthread_mutex_lock(&screen_lock);
+    ss_screen_state value = screen_live;
+    if (screen_count) {
+        value = screen_queue[screen_head];
+        screen_head = (screen_head + 1) % 32; --screen_count;
+    }
+    uint64_t now = guest_ns();
+    value.sample = ++screen_sample;
+    if (value.count && value.point.attributes)
+        LOG("Input: guest screen touch %u at %u,%u", value.point.attributes, value.point.x, value.point.y);
+    value.point.delta_time = screen_time && now >= screen_time ? now - screen_time : 0;
+    screen_time = now;
+    size_t size = 16 + 40 * capacity;
+    dm_guest_write_prepare(out, size);
+    memset(out, 0, size);
+    memcpy(out, &value, value.count ? sizeof(value) : 16);
+    pthread_mutex_unlock(&screen_lock);
+}
 #define TOUCH_STATE(n) \
- HLE_FORCE("_ZN2nn3hid19GetTouchScreenStateILm" #n "EEEvPNS0_16TouchScreenStateIXT_EEE", "No raw Switch touches", void, ss_touch_##n, void *out) { memset(out, 0, 16 + 40 * n); *(int64_t *)out = guest_ns() / 1000000; } \
- HLE_FORCE("_ZN2nn3hid20GetTouchScreenStatesILm" #n "EEEiPNS0_16TouchScreenStateIXT_EEEi", "No raw Switch touches", int, ss_touches_##n, void *out, int count) { if (count <= 0) return 0; ss_touch_##n(out); return 1; }
+ HLE_FORCE("_ZN2nn3hid19GetTouchScreenStateILm" #n "EEEvPNS0_16TouchScreenStateIXT_EEE", "Host provides screen touches", void, ss_touch_##n, void *out) { screen_read(out, n); } \
+ HLE_FORCE("_ZN2nn3hid20GetTouchScreenStatesILm" #n "EEEiPNS0_16TouchScreenStateIXT_EEEi", "Host provides screen touches", int, ss_touches_##n, void *out, int count) { if (count <= 0) return 0; ss_touch_##n(out); return 1; }
 TOUCH_STATE(1) TOUCH_STATE(2) TOUCH_STATE(3) TOUCH_STATE(4)
 TOUCH_STATE(5) TOUCH_STATE(6) TOUCH_STATE(7) TOUCH_STATE(8)
 TOUCH_STATE(9) TOUCH_STATE(10) TOUCH_STATE(11) TOUCH_STATE(12)

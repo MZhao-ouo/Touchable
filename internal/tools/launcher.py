@@ -127,7 +127,7 @@ def upstream_patch(upstream, expected):
         untracked = [p for p in untracked.decode().split('\0') if p]
         if untracked:
             subprocess.run(['git', '-C', str(upstream), 'add', '--intent-to-add', '--force', '--', *untracked], check=True)
-    return subprocess.check_output(['git', '-C', str(upstream), 'diff', '--binary', '--full-index', '--no-ext-diff', '--no-color'])
+    return subprocess.check_output(['git', '-C', str(upstream), 'diff', 'HEAD', '--binary', '--full-index', '--no-ext-diff', '--no-color'])
 
 
 def prepare_dependencies(game, logs):

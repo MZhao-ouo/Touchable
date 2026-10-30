@@ -15,6 +15,33 @@ from game_formats import GameError
 from workspace import ROOT, DEPENDENCIES, UPSTREAM, load_game
 
 
+def dynamic_symbol_extents(image):
+    """Read the mandatory dynamic tables when optional NSO header extents are absent."""
+    if len(image) < 8:
+        raise GameError("Missing MOD0 pointer.")
+    mod = struct.unpack_from('<I', image, 4)[0]
+    if mod > len(image) - 8 or image[mod:mod+4] != b'MOD0':
+        raise GameError("Invalid MOD0 header.")
+    offset = mod + struct.unpack_from('<i', image, mod+4)[0]
+    dynamic = {}
+    while 0 <= offset <= len(image) - 16:
+        tag, value = struct.unpack_from('<qQ', image, offset)
+        offset += 16
+        if not tag:
+            break
+        dynamic[tag] = value
+    else:
+        raise GameError("Unterminated NSO dynamic table.")
+    if not all(tag in dynamic for tag in (4, 5, 6, 10)) or dynamic.get(11, 24) != 24:
+        raise GameError("Unsupported NSO dynamic symbol tables.")
+    if dynamic[4] > len(image) - 8:
+        raise GameError("Invalid NSO dynamic hash table.")
+    buckets, count = struct.unpack_from('<II', image, dynamic[4])
+    if not buckets or not count or (2 + buckets + count)*4 > len(image) - dynamic[4]:
+        raise GameError("Invalid NSO dynamic symbol count.")
+    return dynamic[5], dynamic[10], dynamic[6], count*24
+
+
 def load_nso(path, include_image=False):
     data = path.read_bytes()
     if len(data) < 256 or data[:4] != b"NSO0":
@@ -48,6 +75,8 @@ def load_nso(path, include_image=False):
     rodata = segments[1][1]
     strings_offset += rodata
     symbols_offset += rodata
+    if not strings_size or not symbols_size:
+        strings_offset, strings_size, symbols_offset, symbols_size = dynamic_symbol_extents(image)
     if strings_offset + strings_size > len(image) or symbols_offset + symbols_size > len(image) or symbols_size % 24:
         raise GameError("Invalid NSO symbol table: " + path.name)
     strings = image[strings_offset:strings_offset + strings_size]
