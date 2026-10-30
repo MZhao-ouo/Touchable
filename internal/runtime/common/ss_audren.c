@@ -27,7 +27,9 @@ struct ss_ar_voice {
     int used, released, rate, channels;
     struct { int state; float pitch; ss_ar_mix *destination; float volume[SS_AR_CHANNELS][SS_AR_MIX_BUFFERS]; } client, server;
     ss_ar_wavebuffer pending[SS_AR_WAVEBUFFERS];
-    int pending_count, client_queued;
+    int pending_count, client_queued, outstanding;
+    const void *completed[SS_AR_WAVEBUFFERS];
+    int completed_head, completed_count;
     int64_t client_played;
     ss_ar_wavebuffer queue[SS_AR_WAVEBUFFERS];
     int queue_head, queue_count, in_buffer, ramp;
@@ -217,13 +219,36 @@ void ss_ar_voice_volume(ss_ar_voice *voice, ss_ar_mix *destination, float volume
 int ss_ar_append(ss_ar_voice *voice, const ss_ar_wavebuffer *buffer) {
     if (!voice || !buffer) return 0;
     pthread_mutex_lock(&voice->owner->client_lock);
-    int accepted = voice->client_queued < SS_AR_WAVEBUFFERS && voice->pending_count < SS_AR_WAVEBUFFERS;
+    int accepted = voice->client_queued < SS_AR_WAVEBUFFERS && voice->pending_count < SS_AR_WAVEBUFFERS && (!buffer->tag || voice->outstanding < SS_AR_WAVEBUFFERS);
     if (accepted) {
         voice->pending[voice->pending_count++] = *buffer;
         ++voice->client_queued;
+        if (buffer->tag) ++voice->outstanding;
     }
     pthread_mutex_unlock(&voice->owner->client_lock);
     return accepted;
+}
+
+const void *ss_ar_released_buffer(ss_ar_voice *voice) {
+    if (!voice) return NULL;
+    pthread_mutex_lock(&voice->owner->client_lock);
+    pthread_mutex_lock(&voice->owner->server_lock);
+    const void *result = NULL;
+    if (voice->completed_count) {
+        result = voice->completed[voice->completed_head];
+        voice->completed_head = (voice->completed_head + 1) % SS_AR_WAVEBUFFERS;
+        --voice->completed_count; --voice->outstanding;
+    }
+    pthread_mutex_unlock(&voice->owner->server_lock);
+    pthread_mutex_unlock(&voice->owner->client_lock);
+    return result;
+}
+int ss_ar_voice_play_state(ss_ar_voice *voice) {
+    if (!voice) return SS_AR_STOPPED;
+    pthread_mutex_lock(&voice->owner->client_lock);
+    int state = voice->client.state;
+    pthread_mutex_unlock(&voice->owner->client_lock);
+    return state;
 }
 
 int ss_ar_queued(const ss_ar_voice *voice) {
@@ -303,7 +328,9 @@ void ss_ar_master_volume(ss_ar_renderer *renderer, float volume) {
 
 /* ---------- Server ---------- */
 
+static void finish_buffer(ss_ar_voice *voice);
 static void voice_reset(ss_ar_voice *voice) {
+    while (voice->queue_count) finish_buffer(voice);
     voice->queue_head = voice->queue_count = voice->in_buffer = voice->ramp = 0;
     voice->position = voice->played = 0;
     voice->phase = 1;
@@ -324,6 +351,9 @@ void ss_ar_update(ss_ar_renderer *renderer) {
         ss_ar_voice *voice = &renderer->voices[i];
         if (!voice->used) continue;
         if (voice->released) { voice->used = 0; voice->released = 0; continue; }
+        for (int k = 0; k < voice->pending_count && voice->queue_count < SS_AR_WAVEBUFFERS; ++k)
+            voice->queue[(voice->queue_head + voice->queue_count++) % SS_AR_WAVEBUFFERS] = voice->pending[k];
+        voice->pending_count = 0;
         int old_state = voice->server.state, new_state = voice->client.state;
         if (new_state == SS_AR_STOPPED && old_state != SS_AR_STOPPED) voice_reset(voice);
         if (new_state == SS_AR_STARTED && old_state == SS_AR_STOPPED) voice->ramp = 0;
@@ -332,9 +362,6 @@ void ss_ar_update(ss_ar_renderer *renderer) {
         if (voice->server.destination != voice->client.destination) voice->ramp = 0;
         voice->server.destination = voice->client.destination;
         memcpy(voice->server.volume, voice->client.volume, sizeof(voice->server.volume));
-        for (int k = 0; k < voice->pending_count && voice->queue_count < SS_AR_WAVEBUFFERS; ++k)
-            voice->queue[(voice->queue_head + voice->queue_count++) % SS_AR_WAVEBUFFERS] = voice->pending[k];
-        voice->pending_count = 0;
         voice->client_queued = voice->queue_count;
         voice->client_played = voice->played;
     }
@@ -356,6 +383,8 @@ void ss_ar_update(ss_ar_renderer *renderer) {
 }
 
 static void finish_buffer(ss_ar_voice *voice) {
+    const void *tag = voice->queue[voice->queue_head].tag;
+    if (tag) voice->completed[(voice->completed_head + voice->completed_count++) % SS_AR_WAVEBUFFERS] = tag;
     int end_of_stream = voice->queue[voice->queue_head].end_of_stream;
     voice->queue_head = (voice->queue_head + 1) % SS_AR_WAVEBUFFERS;
     --voice->queue_count;

@@ -284,3 +284,9 @@ The final build also registers real-controller disconnect notifications in nativ
 Local evidence: `.touchable/work/hayarigami/reports/20261030-touch/`. No game screenshots or user data are included in Git.
 
 Build 8 failed device acceptance: direct cover taps did not advance the title, and releasing A raised `NSInternalInconsistencyException` because the inherited glass press reset set the button configuration to nil while a configuration update handler was active. Build 9 skips that reset for plain buttons. Build 9 compiles, passes strict/deep signature verification, and is installed on iPhone 16. The user confirmed that A works normally and accepted this version for now. Direct cover/menu tapping remains unverified and is not claimed as working.
+
+## Build 11: continuous audio buffers (2026-10-30)
+
+The guest imports `GetReleasedWaveBuffer` and `GetVoicePlayState`. The host now implements both. Previously, those calls used SDK object state even though host acquisition stored a host voice pointer. The initial four buffers drained, and the guest did not refill them. A device capture of about 371 seconds contained only zero samples.
+
+Consumed buffers now retain their original guest pointer until the guest retrieves them. The tagged outstanding count bounds storage to four buffers. Stop returns both queued buffers and buffers submitted before the same update. A sanitizer regression recycles 100 buffers, checks pointer identity and nonzero output, and checks stop recovery. The existing mixer tests pass. A bounded host capture after the fix has 1,677,903 nonzero samples and peak 10,872. All 77 Python tests pass. The iOS build passes. Actual iPhone audibility remains to be confirmed after installation.

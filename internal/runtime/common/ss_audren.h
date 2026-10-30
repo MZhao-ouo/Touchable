@@ -19,6 +19,7 @@ typedef struct {
     uint64_t size;           /* bytes */
     int32_t start, end;      /* sample frame offsets; playback covers [start, end) */
     int loop, end_of_stream;
+    const void *tag; /* Original guest buffer returned after consumption. */
 } ss_ar_wavebuffer;
 
 /* nn::audio::I3dl2ReverbParameterSet. Gains are millibels except dry_gain. */
@@ -52,6 +53,8 @@ void ss_ar_voice_destination(ss_ar_voice *voice, ss_ar_mix *destination);
 void ss_ar_voice_volume(ss_ar_voice *voice, ss_ar_mix *destination, float volume, int source, int target);
 int ss_ar_append(ss_ar_voice *voice, const ss_ar_wavebuffer *buffer);   /* 0 when four buffers are queued */
 int ss_ar_queued(const ss_ar_voice *voice);
+const void *ss_ar_released_buffer(ss_ar_voice *voice);
+int ss_ar_voice_play_state(ss_ar_voice *voice);
 int64_t ss_ar_played(const ss_ar_voice *voice);
 
 ss_ar_reverb *ss_ar_add_reverb(ss_ar_renderer *renderer, ss_ar_mix *mix, int channels);

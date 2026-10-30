@@ -501,7 +501,7 @@ _Static_assert(sizeof(ss_guest_wavebuffer) == 0x30, "WaveBuffer ABI");
 
 HLE_FORCE("_ZN2nn5audio16AppendWaveBufferEPNS0_9VoiceTypeEPKNS0_10WaveBufferE", "Queue host voice data",
           unsigned, ss_ar_voice_append, void *voice, const ss_guest_wavebuffer *buffer) {
-    ss_ar_wavebuffer value = {buffer->buffer, buffer->size, buffer->start, buffer->end, buffer->loop != 0, buffer->end_of_stream != 0};
+    ss_ar_wavebuffer value = {buffer->buffer, buffer->size, buffer->start, buffer->end, buffer->loop != 0, buffer->end_of_stream != 0, buffer};
     return ss_ar_append(slot_get(voice), &value);
 }
 
@@ -511,4 +511,11 @@ HLE_FORCE("_ZN2nn5audio18GetWaveBufferCountEPKNS0_9VoiceTypeE", "Host voice stat
 
 HLE_FORCE("_ZN2nn5audio25GetVoicePlayedSampleCountEPKNS0_9VoiceTypeE", "Host voice status", int64_t, ss_ar_voice_played, const void *voice) {
     return ss_ar_played(slot_get(voice));
+}
+
+HLE_FORCE("_ZN2nn5audio21GetReleasedWaveBufferEPNS0_9VoiceTypeE", "Return consumed host voice buffers", const void *, ss_ar_released, void *voice) {
+    return ss_ar_released_buffer(slot_get(voice));
+}
+HLE_FORCE("_ZN2nn5audio17GetVoicePlayStateEPKNS0_9VoiceTypeE", "Read host voice state", int, ss_ar_play_state, const void *voice) {
+    return ss_ar_voice_play_state(slot_get(voice));
 }
