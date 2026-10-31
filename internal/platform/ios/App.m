@@ -23,9 +23,10 @@ void dm_gfx_suspend(int on);
 void dm_audio_suspend(int on);
 void ss_display_set_hz(int hz);
 
-/* SS_DISPLAY_HZ=120 in the game profile asks for 120 Hz on a ProMotion screen. The Info.plist key alone keeps
-   an iPhone at 60 Hz, so the input display link asks for 80 to 120 Hz. The game starts at 60 Hz and follows the
-   rate that the screen gives: 60 Hz in Low Power Mode, when the device is hot, or on a 60 Hz screen. */
+/* SS_DISPLAY_HZ=90 or 120 in the game profile asks for that rate on a ProMotion screen. The Info.plist key alone
+   keeps an iPhone at 60 Hz, so the input display link asks for the rate. The game starts at 60 Hz and follows the
+   rate that the screen gives, up to the selected rate: 60 Hz in Low Power Mode, when the device is hot, or on a
+   60 Hz screen. A screen that cannot run at 90 Hz can give 80 Hz. */
 static int displayHzWanted = 60;
 
 /* TV mode follows the audio output when TouchableTVModeAudioRoute is set in Info.plist (only Rhythm Heaven).
@@ -191,6 +192,10 @@ static void updateInput(void) {
     for (int slot = 1; slot < 4; ++slot) ss_input_set_player(slot, pads[slot] | (slot == 1 ? splitButtons[1] : 0), xs[slot], ys[slot]);
 }
 
+/* A pressed D-pad arm or button: a white light inside the glass. The user found the build 17 values (0.32 fill,
+   0.9 glow) too bright. A glow outside the glass did not match the arm shape, so the arm has none. */
+#define DPAD_LIT_FILL 0.2
+
 /* The outline of a touch button. The user's sketch of 2026-10-23 makes ZL and ZR slanted and R a diamond. */
 typedef NS_ENUM(NSInteger, PadShape) { PadShapeRound, PadShapeLeanLeft, PadShapeLeanRight, PadShapeDiamond };
 
@@ -216,10 +221,7 @@ static CGAffineTransform padShapeTransform(PadShape shape, CGSize size) {
 @property(nonatomic, readonly) BOOL glassShown;
 @property(nonatomic) BOOL slides;   /* a finger can slide from this button onto another sliding button */
 @property(nonatomic, weak) PadButton *slideTarget;   /* the button that this button's touch now holds */
-@property(nonatomic) BOOL untracked;   /* a slide ended UIKit's tracking of this button's touch */
-@property(nonatomic) BOOL keepPress;   /* the game input keeps this button while UIKit's tracking ends */
-@property(nonatomic) BOOL slideHeld;   /* a slide holds this button, so it shows the drawn mark */
-@property(nonatomic, strong) UIView *slideMark;
+@property(nonatomic, strong) UIView *pressMark;   /* the drawn press look */
 @property(nonatomic) CGRect homeFrame, mapFrame;   /* the frames in the pad and on the zoomed map */
 @end
 @implementation PadButton
@@ -270,7 +272,11 @@ static CGAffineTransform padShapeTransform(PadShape shape, CGSize size) {
    A slide also presses another sliding button when the finger enters its touch area, and releases the
    button of the previous slide. The touch areas do not overlap, so the touch holds the first button and
    at most one more. A slide back to the first button holds only that button. A button that another
-   finger holds does not take the press. */
+   finger holds does not take the press.
+   The buttons do not use UIKit's touch tracking. Its glass press look grew the button and faded out
+   after the release, and it showed only on the button where the touch started, so a slide changed the
+   look of the held buttons (2026-10-27: "button touch effects are kind of buggy"). Every pressed button
+   shows the same drawn mark, from the touch to the release. */
 - (PadButton *)slideButtonFor:(UITouch *)touch {
     for (UIView *view in self.superview.subviews) {
         if (![view isKindOfClass:PadButton.class]) continue;
@@ -280,78 +286,55 @@ static CGAffineTransform padShapeTransform(PadShape shape, CGSize size) {
     }
     return nil;
 }
+- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    [self releaseSlide];
+    self.highlighted = YES;
+}
 - (void)touchesMoved:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
     UITouch *touch = touches.anyObject;
     PadButton *current = self.slideTarget ?: self;
-    if (self.slides && touch && ![current pointInside:[touch locationInView:current] withEvent:event]) {
-        PadButton *next = [self slideButtonFor:touch];
-        if (next && next != current && (next == self || !next.highlighted)) {
-            /* UIKit shows the system press look only on the button that tracks the touch.
-               The first slide ends that tracking. Each button that a slide holds shows a drawn mark. */
-            if (!self.untracked) {
-                self.untracked = YES;
-                self.keepPress = YES;
-                [super touchesCancelled:touches withEvent:event];
-                self.keepPress = NO;
-                UIButtonConfiguration *config = self.configuration;   /* a new glass background ends the press look */
-                self.configuration = nil;
-                self.configuration = config;
-                self.slideHeld = YES;
-                self.highlighted = YES;   /* the cancel released the first button */
-            }
-            if (current != self) current.highlighted = NO;
-            if (next != self) {
-                next.slideHeld = YES;
-                next.highlighted = YES;
-            }
-            self.slideTarget = next == self ? nil : next;
-            if (getenv("SS_SLIDE_TRACE")) fprintf(stderr, "Touch slide: %s to %s\n", current.accessibilityLabel.UTF8String, next.accessibilityLabel.UTF8String);
-            current = next;
-        }
-    }
-    if (!self.untracked) [super touchesMoved:touches withEvent:event];
+    if (!self.slides || !touch || [current pointInside:[touch locationInView:current] withEvent:event]) return;
+    PadButton *next = [self slideButtonFor:touch];
+    if (!next || next == current || (next != self && next.highlighted)) return;
+    if (current != self) current.highlighted = NO;
+    if (next != self) next.highlighted = YES;
+    self.slideTarget = next == self ? nil : next;
+    if (getenv("SS_SLIDE_TRACE")) fprintf(stderr, "Touch slide: %s to %s\n", current.accessibilityLabel.UTF8String, next.accessibilityLabel.UTF8String);
 }
 - (void)releaseSlide {
     PadButton *target = self.slideTarget;
     self.slideTarget = nil;
     if (target.highlighted) target.highlighted = NO;
 }
-- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
-    self.untracked = NO;
-    [super touchesBegan:touches withEvent:event];
-}
 - (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
     [self releaseSlide];
-    if (self.untracked) self.highlighted = NO;
-    else [super touchesEnded:touches withEvent:event];
-    [self endPressLook];
+    self.highlighted = NO;
 }
 - (void)touchesCancelled:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
     [self releaseSlide];
-    if (self.untracked) self.highlighted = NO;
-    else [super touchesCancelled:touches withEvent:event];
-    [self endPressLook];
+    self.highlighted = NO;
 }
-/* The system glass press response fades out over about 0.2 seconds after the release. A new glass
-   background ends it at once (user request on 2026-10-23: a faster button response). */
-- (void)endPressLook {
-    if (!self.configuration) return;
-    UIButtonConfiguration *config = self.configuration;
-    self.configuration = nil;
-    self.configuration = config;
-}
-/* The mark of a button that a slide holds: a white fill, as bright as the lit D-pad arm (DPAD_LIT_FILL). */
-- (void)showSlideMark:(BOOL)shown {
-    if (shown && !self.slideMark) {
-        self.slideMark = [UIView new];
-        self.slideMark.userInteractionEnabled = NO;
-        self.slideMark.backgroundColor = [UIColor colorWithWhite:1 alpha:0.2];
-        [self addSubview:self.slideMark];
+/* The press look: a white fill, as bright as the lit D-pad arm (DPAD_LIT_FILL), above the glass and
+   below the title. A circle or a capsule; a shaped button has a rounded rectangle, which its transform
+   shapes like the button. A hidden button shows no look. */
+- (void)showPressMark:(BOOL)shown {
+    shown = shown && !self.appearanceHidden;
+    if (!shown && !self.pressMark) return;
+    if (!self.pressMark) {
+        self.pressMark = [UIView new];
+        self.pressMark.userInteractionEnabled = NO;
+        self.pressMark.backgroundColor = [UIColor colorWithWhite:1 alpha:DPAD_LIT_FILL];
     }
-    self.slideMark.frame = self.bounds;
-    /* A circle or a capsule. A shaped button has a rounded rectangle, which its transform shapes like the button. */
-    self.slideMark.layer.cornerRadius = self.shape == PadShapeRound ? fmin(self.bounds.size.width, self.bounds.size.height) / 2 : 10;
-    self.slideMark.hidden = !shown;
+    if (shown) {
+        if (self.pressMark.superview != self) [self addSubview:self.pressMark];
+        [self bringSubviewToFront:self.pressMark];
+        for (UIView *view in @[self.titleLabel ?: (id)NSNull.null, self.imageView ?: (id)NSNull.null,
+                               self.caption ?: (id)NSNull.null, self.captionImage ?: (id)NSNull.null])
+            if ([view isKindOfClass:UIView.class] && view.superview == self) [self bringSubviewToFront:view];
+    }
+    self.pressMark.frame = self.bounds;
+    self.pressMark.layer.cornerRadius = self.shape == PadShapeRound ? fmin(self.bounds.size.width, self.bounds.size.height) / 2 : 10;
+    self.pressMark.hidden = !shown;
 }
 /* The touch area is the drawn circle or capsule, widened by hitMargin on each side. */
 - (BOOL)pointInside:(CGPoint)point withEvent:(UIEvent *)event {
@@ -400,10 +383,9 @@ static CGAffineTransform padShapeTransform(PadShape shape, CGSize size) {
     if (value && self.hidden) value = NO;   /* a touch that started before the button hid */
     BOOL was = self.highlighted;
     [super setHighlighted:value];
-    if (!value) self.slideHeld = NO;
-    if (self.slideHeld || self.slideMark) [self showSlideMark:self.slideHeld];
+    [self showPressMark:value];
     if (value && !was) notePress(self.bit);
-    if (value) touchButtons |= self.bit; else if (!self.keepPress) touchButtons &= ~self.bit;
+    if (value) touchButtons |= self.bit; else touchButtons &= ~self.bit;
     if (value != was && getenv("RH_MENU_TRACE") && (self.bit & ((1ull << 1) | (1ull << 3) | (1ull << 10) | (1ull << 11))))
         fprintf(stderr, "Touch button %s: %s mask %#llx\n", self.accessibilityLabel.UTF8String, value ? "down" : "up", (unsigned long long)self.bit);
     updateInput();
@@ -416,17 +398,36 @@ static CGAffineTransform padShapeTransform(PadShape shape, CGSize size) {
 @end
 
 /* Liquid Glass for the touch controls. Apple's HIG uses the clear variant over rich media,
-   such as a game. The controls share one glass container (UIGlassContainerEffect). */
+   such as a game. The controls share one glass container (UIGlassContainerEffect).
+   The Simple button style (TouchableControlStyle "plain") uses a flat, see-through fill instead.
+   The system does not sample and refract the game picture for it, so it needs less GPU time. */
+static BOOL plainControls;
+static UIVisualEffectView *glassView(void);
+static UIButtonConfiguration *padGlassConfiguration(CGFloat cornerRadius);
 static UIButtonConfiguration *glassButtonConfiguration(void) {
+    if (plainControls) return padGlassConfiguration(0);
     UIButtonConfiguration *config = [UIButtonConfiguration clearGlassButtonConfiguration];
     config.cornerStyle = UIButtonConfigurationCornerStyleCapsule;
     config.contentInsets = NSDirectionalEdgeInsetsZero;
     config.baseForegroundColor = UIColor.whiteColor;
     return config;
 }
+/* The glass of a pad button. The glass of clearGlassButtonConfiguration is interactive: it grows under
+   each touch and fades out after the release by itself. A pad button draws its own press look
+   (PadButton showPressMark), so its glass is not interactive, as on the D-pad. A corner radius of 0
+   makes a capsule. */
+static UIButtonConfiguration *padGlassConfiguration(CGFloat cornerRadius) {
+    UIButtonConfiguration *config = [UIButtonConfiguration plainButtonConfiguration];
+    UIVisualEffectView *glass = glassView();
+    if (cornerRadius > 0) glass.cornerConfiguration = [UICornerConfiguration configurationWithUniformRadius:[UICornerRadius fixedRadius:cornerRadius]];
+    config.background.customView = glass;
+    config.contentInsets = NSDirectionalEdgeInsetsZero;
+    config.baseForegroundColor = UIColor.whiteColor;
+    return config;
+}
 /* The rhythm layout has a fixed size. The arrows use SF Symbols. */
 static UIButtonConfiguration *rhythmGlassConfiguration(NSString *title, NSString *symbol) {
-    UIButtonConfiguration *config = glassButtonConfiguration();
+    UIButtonConfiguration *config = padGlassConfiguration(0);
     if (symbol) {
         config.image = [UIImage systemImageNamed:symbol];
         config.preferredSymbolConfigurationForImage = [UIImageSymbolConfiguration configurationWithPointSize:17 weight:UIImageSymbolWeightBold];
@@ -441,9 +442,14 @@ static void setGlassButton(UIButton *button, UIButtonConfiguration *config) {
     button.configuration = config;
 }
 static UIVisualEffectView *glassView(void) {
-    UIVisualEffectView *view = [[UIVisualEffectView alloc] initWithEffect:[UIGlassEffect effectWithStyle:UIGlassEffectStyleClear]];
+    UIVisualEffectView *view = [[UIVisualEffectView alloc] initWithEffect:plainControls ? nil : [UIGlassEffect effectWithStyle:UIGlassEffectStyleClear]];
     view.cornerConfiguration = [UICornerConfiguration capsuleConfiguration];
     view.userInteractionEnabled = NO;
+    if (plainControls) {
+        view.backgroundColor = [UIColor colorWithWhite:0 alpha:0.3];
+        view.layer.borderWidth = 1;
+        view.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.35].CGColor;
+    }
     return view;
 }
 /* The glass container takes no touches itself. Touches outside its controls go to the views below. */
@@ -456,9 +462,6 @@ static UIVisualEffectView *glassView(void) {
 }
 @end
 
-/* A pressed D-pad arm: a white light inside the glass arm. The user found the build 17 values (0.32 fill,
-   0.9 glow) too bright. A glow outside the glass did not match the arm shape, so the arm has none. */
-#define DPAD_LIT_FILL 0.2
 /* Sizes of the D-pad parts, as fractions of its width. */
 typedef struct { CGFloat center, arm, reach; } dpad_shape;
 static dpad_shape dpadShape(CGFloat size) { return (dpad_shape){size / 2, round(size * 0.17), round(size * 0.42)}; }
@@ -1270,16 +1273,12 @@ static void *runGame(void *unused) {
     for (NSUInteger i = 0; i < names.count; ++i) {
         PadButton *button = [PadButton buttonWithType:UIButtonTypeCustom];
         button.bit = 1ull << bits[i];
-        setGlassButton(button, glassButtonConfiguration());   /* the Switch title follows the layout size */
         button.accessibilityLabel = names[i];
-        button.slides = !self.rhythmLayout && (i < 4 || i == SS_PAD_ZR);   /* A, B, X, Y, and ZR */
-        if (!self.rhythmLayout && (i == SS_PAD_ZL || i == SS_PAD_ZR || i == SS_PAD_R || i == SS_PAD_L)) {
-            button.shape = i == SS_PAD_ZL ? PadShapeLeanLeft : i == SS_PAD_ZR ? PadShapeLeanRight : PadShapeDiamond;
-            UIButtonConfiguration *config = button.configuration;   /* a rounded rectangle of glass */
-            config.cornerStyle = UIButtonConfigurationCornerStyleFixed;
-            config.background.cornerRadius = 10;
-            button.configuration = config;
-        }
+        button.slides = !self.rhythmLayout && (i < 4 || i == SS_PAD_ZL || i == SS_PAD_ZR);   /* A, B, X, Y, ZL, and ZR */
+        BOOL shaped = !self.rhythmLayout && (i == SS_PAD_ZL || i == SS_PAD_ZR || i == SS_PAD_R || i == SS_PAD_L);
+        /* The Switch title follows the layout size. A shaped button is a rounded rectangle of glass. */
+        setGlassButton(button, padGlassConfiguration(shaped ? 10 : 0));
+        if (shaped) button.shape = i == SS_PAD_ZL ? PadShapeLeanLeft : i == SS_PAD_ZR ? PadShapeLeanRight : PadShapeDiamond;
         if (self.rhythmLayout) {
             button.look = rhythmGlassConfiguration(names[i], i < 4 ? arrows[i] : nil);
             button.appearanceHidden = i < 4;
@@ -1311,11 +1310,16 @@ static void *runGame(void *unused) {
         }];
     }
     self.inputLink = [CADisplayLink displayLinkWithTarget:self selector:@selector(pollInput:)];
-    self.inputLink.preferredFrameRateRange = displayHzWanted > 60 ? CAFrameRateRangeMake(80, 120, 120) : CAFrameRateRangeMake(60, 60, 60);
+    self.inputLink.preferredFrameRateRange = displayHzWanted > 60 ? CAFrameRateRangeMake(80, displayHzWanted, displayHzWanted) : CAFrameRateRangeMake(60, 60, 60);
     self.displayHz = 60;
     [self.inputLink addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
 }
 - (void)addGlassLayer {
+    if (plainControls) {   /* The simple fill is dark itself. It needs no dark layer and no glass container. */
+        self.glassLayer = [[GlassLayer alloc] initWithEffect:nil];
+        [self.view addSubview:self.glassLayer];
+        return;
+    }
     /* Apple's HIG adds a 35% dark layer behind clear glass when the content is bright. */
     UIView *dimView = [[UIView alloc] initWithFrame:self.view.bounds];
     dimView.userInteractionEnabled = NO;
@@ -1334,7 +1338,9 @@ static void *runGame(void *unused) {
 - (void)followDisplayRate:(CADisplayLink *)link {
     if (displayHzWanted <= 60) return;
     CFTimeInterval frame = link.targetTimestamp - link.timestamp;
-    int hz = frame > 0 && frame < 1.0 / 90 ? 120 : 60;
+    double rate = frame > 0 ? 1 / frame : 0;
+    int hz = rate > 105 ? 120 : rate > 85 ? 90 : rate > 70 ? 80 : 60;
+    if (hz > displayHzWanted) hz = displayHzWanted;
     if (hz == self.displayHz) { self.displayHzTicks = 0; return; }
     if (++self.displayHzTicks < 30) return;
     self.displayHzTicks = 0;
@@ -1467,7 +1473,8 @@ static void *runGame(void *unused) {
     updateInput();
 }
 - (void)styleMenuControl:(UIButton *)button symbol:(NSString *)symbol selected:(NSString *)selected {
-    UIButtonConfiguration *config = glassButtonConfiguration();
+    /* Back and Skip are pad buttons with the drawn press look. The pad toggle is a plain button. */
+    UIButtonConfiguration *config = [button isKindOfClass:PadButton.class] ? padGlassConfiguration(0) : glassButtonConfiguration();
     config.image = [UIImage systemImageNamed:symbol];
     config.preferredSymbolConfigurationForImage = [UIImageSymbolConfiguration configurationWithPointSize:20 weight:UIImageSymbolWeightSemibold];
     setGlassButton(button, config);
@@ -1538,6 +1545,7 @@ static void *runGame(void *unused) {
 }
 /* Put a dark circle behind each visible glass control. */
 - (void)updateDimming {
+    if (!self.dimming) return;   /* the Simple button style */
     CGMutablePathRef path = CGPathCreateMutable();
     NSMutableArray<UIView *> *views = [NSMutableArray array];
     if (self.dpad) [views addObject:self.dpad];
@@ -1834,6 +1842,14 @@ static void *runGame(void *unused) {
         if (rate.integerValue && [rates isKindOfClass:NSArray.class] && [rates containsObject:@(rate.integerValue)])
             setenv("SS_DISPLAY_HZ", rate.UTF8String, 1);
         if ([playerSettings[@"HealthBars"] boolValue] && [defaults boolForKey:@"TouchableHealthBars"]) setenv("SS_HEALTH_BARS", "1", 1);
+        NSString *world = [defaults stringForKey:@"TouchableWorldScale"];
+        NSArray *worlds = playerSettings[@"WorldScales"];
+        if (world.integerValue && [worlds isKindOfClass:NSArray.class] && [worlds containsObject:@(world.integerValue)])
+            setenv("SS_WORLD_SCALE", world.UTF8String, 1);
+        plainControls = [playerSettings[@"ControlStyle"] boolValue] && [[defaults stringForKey:@"TouchableControlStyle"] isEqualToString:@"plain"];
+        if ([playerSettings[@"WorldScales"] count] || [playerSettings[@"ControlStyle"] boolValue])
+            fprintf(stderr, "Player settings: world scale %s (SS_WORLD_SCALE=%s), button style %s\n", (world ?: @"default").UTF8String,
+                    getenv("SS_WORLD_SCALE") ?: "100", plainControls ? "plain" : "glass");
         voicePlay = tvModeAudioRoute && [playerSettings[@"VoicePlay"] boolValue] && [defaults boolForKey:@"TouchableVoicePlay"];
         NSString *sensitivity = [defaults stringForKey:@"TouchableVoiceSensitivity"] ?: @"medium";
         if ([sensitivity isEqualToString:@"high"]) { voiceFloor = 0.05f; voiceRatio = 4; }
@@ -1844,9 +1860,9 @@ static void *runGame(void *unused) {
                 (height ?: @"default").UTF8String, getenv("SS_RENDER_HEIGHT") ?: "720",
                 (rate ?: @"default").UTF8String, getenv("SS_DISPLAY_HZ") ?: "60", getenv("SS_HEALTH_BARS") ? "on" : "off");
     }
-    /* The game starts at 60 Hz. The input display link raises the rate when the screen runs at 120 Hz. */
+    /* The game starts at 60 Hz. The input display link raises the rate when the screen runs faster. */
     const char *displayHz = getenv("SS_DISPLAY_HZ");
-    if (displayHz && atoi(displayHz) == 120) displayHzWanted = 120;
+    if (displayHz && (atoi(displayHz) == 90 || atoi(displayHz) == 120)) displayHzWanted = atoi(displayHz);
     setenv("SS_DISPLAY_HZ", "60", 1);
     AVAudioSession *audio = AVAudioSession.sharedInstance;
     /* Voice play records and plays. The output stays on the speaker (not the earpiece) and on Bluetooth A2DP. */

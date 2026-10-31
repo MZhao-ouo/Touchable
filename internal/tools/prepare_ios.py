@@ -52,41 +52,47 @@ def shell_tv_mode_audio_route(shell):
 
 
 RENDER_HEIGHTS = range(720, 1441)   # SS_RENDER_HEIGHT range in runtime/common/ss_display.c
-DISPLAY_RATES = (60, 120)            # SS_DISPLAY_HZ values in runtime/common/ss_platform.c
+DISPLAY_RATES = (60, 90, 120)        # SS_DISPLAY_HZ values that the iOS app accepts (App.m displayHzWanted)
+WORLD_SCALES = range(50, 100)        # SS_WORLD_SCALE range in runtime/common/ss_display.c; 100 is the default
 
 
-PLAYER_SETTINGS = ('render_heights', 'display_hz', 'health_bars', 'voice_play')
+PLAYER_SETTINGS = ('render_heights', 'display_hz', 'world_scales', 'health_bars', 'voice_play', 'control_style')
 
 
 def shell_player_settings(shell, environment):
-    """Optional ios.player_settings: {"render_heights": [...], "display_hz": [...], "health_bars": true, "voice_play": true}.
-    Return None or {"render_heights", "display_hz", "health_bars", "voice_play", "default_height", "default_hz"}.
-    The defaults come from the profile environment."""
+    """Optional ios.player_settings: {"render_heights": [...], "display_hz": [...], "world_scales": [...], "health_bars": true,
+    "voice_play": true, "control_style": true}. Return None or {"render_heights", "display_hz", "world_scales", "health_bars",
+    "voice_play", "control_style", "default_height", "default_hz"}. The defaults come from the profile environment."""
     value = shell.get('player_settings')
     if value is None:
         return None
     if not isinstance(value, dict) or not value or set(value) - set(PLAYER_SETTINGS):
         raise WorkspaceError(f'ios.player_settings may contain only {", ".join(PLAYER_SETTINGS)}.')
     result = {}
-    for key, allowed in (('render_heights', RENDER_HEIGHTS), ('display_hz', DISPLAY_RATES)):
+    for key, allowed in (('render_heights', RENDER_HEIGHTS), ('display_hz', DISPLAY_RATES), ('world_scales', WORLD_SCALES)):
         items = value.get(key, [])
         if (not isinstance(items, list) or len(set(items)) != len(items) or
                 not all(isinstance(v, int) and not isinstance(v, bool) and v in allowed for v in items)):
             raise WorkspaceError(f'ios.player_settings.{key} must be distinct values in the supported range.')
         result[key] = sorted(items)
-    for key in ('health_bars', 'voice_play'):
+    for key in ('health_bars', 'voice_play', 'control_style'):
         result[key] = value.get(key, False)
         if not isinstance(result[key], bool):
             raise WorkspaceError(f'ios.player_settings.{key} must be true or false.')
     if not any(result[key] for key in PLAYER_SETTINGS):
         raise WorkspaceError(f'ios.player_settings needs one of {", ".join(PLAYER_SETTINGS)}.')
     result['default_height'] = int(environment.get('SS_RENDER_HEIGHT', 720))
-    result['default_hz'] = 120 if str(environment.get('SS_DISPLAY_HZ', '60')) == '120' else 60
+    rate = str(environment.get('SS_DISPLAY_HZ', '60'))
+    result['default_hz'] = int(rate) if rate in ('90', '120') else 60
     return result
 
 
 SETTINGS_TEXT = {
     'en': {'Graphics': 'Graphics', 'Resolution': 'Render resolution', 'Rate': 'Refresh rate',
+           'World': 'World resolution', 'WorldDefault': 'Full (100%)',
+           'Controls': 'Touch controls', 'ControlStyle': 'Button style', 'StyleGlass': 'Liquid Glass', 'StylePlain': 'Simple',
+           'ControlsFooter': 'Simple buttons have a flat, see-through fill. They need less GPU time than Liquid Glass. '
+           'Takes effect the next time the game starts.',
            'Gameplay': 'Gameplay', 'HealthBars': 'Enemy health bars', 'GameplayFooter': 'Shows a bar above each enemy that you hit. Takes effect the next time the game starts.',
            'Voice': 'Voice play', 'VoicePlay': 'Play with your voice', 'VoiceSensitivity': 'Sensitivity',
            'VoiceLow': 'Low (loud claps only)', 'VoiceMedium': 'Medium', 'VoiceHigh': 'High (quiet sounds too)',
@@ -96,8 +102,12 @@ SETTINGS_TEXT = {
            'Takes effect the next time the game starts.',
            'Default': 'Default (%s)', 'Footer': 'Changes take effect the next time the game starts. '
            'A lower resolution or 60 Hz makes the GPU work less, so fewer frames drop and the device stays cooler. '
+           'World resolution makes only the game world smaller. The HUD, menus, and text stay sharp. '
            'The picture is at most 1920 pixels wide, so a wide screen can use fewer lines than selected.'},
     'zh-Hans': {'Graphics': '画面', 'Resolution': '渲染分辨率', 'Rate': '刷新率', 'Default': '默认（%s）',
+                'World': '场景分辨率', 'WorldDefault': '完整（100%）',
+                'Controls': '触控按键', 'ControlStyle': '按键样式', 'StyleGlass': '液态玻璃', 'StylePlain': '简洁',
+                'ControlsFooter': '简洁按键为扁平的半透明填充，比液态玻璃占用更少的 GPU 时间。下次启动游戏时生效。',
                 'Gameplay': '游戏', 'HealthBars': '敌人血条', 'GameplayFooter': '在被击中的敌人上方显示血条。下次启动游戏时生效。',
                 'Voice': '声音游玩', 'VoicePlay': '用声音游玩', 'VoiceSensitivity': '灵敏度',
                 'VoiceLow': '低（仅响亮的拍手）', 'VoiceMedium': '中', 'VoiceHigh': '高（较轻的声音也算）',
@@ -105,6 +115,7 @@ SETTINGS_TEXT = {
                 '请在游戏中调整：开始菜单 >“电视机延迟校正”。为此 TV 模式会保持开启。'
                 '与扬声器中游戏声音相符的声音不计入。建议使用有线耳机。下次启动游戏时生效。',
                 'Footer': '下次启动游戏时生效。较低的分辨率或 60 Hz 可以减轻 GPU 负担，掉帧更少，设备也更凉。'
+                '场景分辨率只降低游戏世界的分辨率，HUD、菜单和文字保持清晰。'
                 '画面宽度最多 1920 像素，宽屏实际行数可能低于所选值。'},
 }
 
@@ -115,7 +126,7 @@ def stage_settings_bundle(settings, directory):
     if not settings: return None
     directory.mkdir(parents=True)
     items = []
-    if settings['render_heights'] or settings['display_hz']:
+    if settings['render_heights'] or settings['display_hz'] or settings.get('world_scales'):
         items.append({'Type': 'PSGroupSpecifier', 'Title': 'Graphics', 'FooterText': 'Footer'})
     if settings['render_heights']:
         values = ['default'] + [str(v) for v in settings['render_heights']]
@@ -127,6 +138,11 @@ def stage_settings_bundle(settings, directory):
         titles = ['DefaultRate'] + [f'{v} Hz' for v in settings['display_hz']]
         items.append({'Type': 'PSMultiValueSpecifier', 'Key': 'TouchableDisplayHz', 'Title': 'Rate',
                       'DefaultValue': 'default', 'Values': values, 'Titles': titles})
+    if settings.get('world_scales'):
+        values = ['default'] + [str(v) for v in sorted(settings['world_scales'], reverse=True)]
+        titles = ['WorldDefault'] + [f'{v}%' for v in sorted(settings['world_scales'], reverse=True)]
+        items.append({'Type': 'PSMultiValueSpecifier', 'Key': 'TouchableWorldScale', 'Title': 'World',
+                      'DefaultValue': 'default', 'Values': values, 'Titles': titles})
     if settings['health_bars']:
         items.append({'Type': 'PSGroupSpecifier', 'Title': 'Gameplay', 'FooterText': 'GameplayFooter'})
         items.append({'Type': 'PSToggleSwitchSpecifier', 'Key': 'TouchableHealthBars', 'Title': 'HealthBars', 'DefaultValue': False})
@@ -136,11 +152,17 @@ def stage_settings_bundle(settings, directory):
         items.append({'Type': 'PSMultiValueSpecifier', 'Key': 'TouchableVoiceSensitivity', 'Title': 'VoiceSensitivity',
                       'DefaultValue': 'medium', 'Values': ['low', 'medium', 'high'],
                       'Titles': ['VoiceLow', 'VoiceMedium', 'VoiceHigh']})
+    if settings.get('control_style'):
+        items.append({'Type': 'PSGroupSpecifier', 'Title': 'Controls', 'FooterText': 'ControlsFooter'})
+        items.append({'Type': 'PSMultiValueSpecifier', 'Key': 'TouchableControlStyle', 'Title': 'ControlStyle',
+                      'DefaultValue': 'glass', 'Values': ['glass', 'plain'], 'Titles': ['StyleGlass', 'StylePlain']})
     with (directory / 'Root.plist').open('wb') as stream:
         plistlib.dump({'StringsTable': 'Root', 'PreferenceSpecifiers': items}, stream, fmt=plistlib.FMT_XML)
     for language, text in SETTINGS_TEXT.items():
         strings = {k: text[k] for k in ('Graphics', 'Resolution', 'Rate', 'Footer', 'Gameplay', 'HealthBars', 'GameplayFooter',
-                                        'Voice', 'VoicePlay', 'VoiceFooter', 'VoiceSensitivity', 'VoiceLow', 'VoiceMedium', 'VoiceHigh')}
+                                        'Voice', 'VoicePlay', 'VoiceFooter', 'VoiceSensitivity', 'VoiceLow', 'VoiceMedium', 'VoiceHigh',
+                                        'World', 'WorldDefault', 'Controls', 'ControlStyle', 'StyleGlass', 'StylePlain',
+                                        'ControlsFooter')}
         strings['DefaultHeight'] = text['Default'] % f"{settings['default_height']}p"
         strings['DefaultRate'] = text['Default'] % f"{settings['default_hz']} Hz"
         (directory / f'{language}.lproj').mkdir()
@@ -312,7 +334,9 @@ def main():
         if player_settings:
             info['TouchablePlayerSettings'] = {'RenderHeights': player_settings['render_heights'],
                                                'DisplayHz': player_settings['display_hz'],
+                                               'WorldScales': player_settings['world_scales'],
                                                'HealthBars': player_settings['health_bars'],
+                                               'ControlStyle': player_settings['control_style'],
                                                'VoicePlay': player_settings['voice_play']}
             if player_settings['voice_play']:
                 info['NSMicrophoneUsageDescription'] = MICROPHONE_TEXT['en']

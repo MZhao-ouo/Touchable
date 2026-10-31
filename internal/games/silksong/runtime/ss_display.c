@@ -68,15 +68,16 @@ void ss_display_install(void) {
        Its render texture determines the world camera's projection ratio.
        Resizing only Screen would stretch the old 16:9 world texture. */
     /* SS_RENDER_HEIGHT scales both handheld records. The world texture keeps
-       the game's 576:720 ratio to the output. */
-    ss_display_size world = ss_display_resolution(handheld[1]);
+       the game's 576:720 ratio to the output. SS_WORLD_SCALE makes only the
+       world texture smaller. */
+    ss_display_size world = ss_display_world_resolution(handheld[1]);
     handheld[0] = world.width;
     handheld[1] = world.height;
     handheld[2] = size.width;
     handheld[3] = size.height;
     *resolution_slot = (uintptr_t)phone_set_resolution;
-    LOG("DISPLAY main %s adaptive %dx%d aspect=%.6f; world texture %dx%d; output height %d", layout->build, size.width, size.height,
-        (double)size.width / size.height, world.width, world.height, ss_display_output_height());
+    LOG("DISPLAY main %s adaptive %dx%d aspect=%.6f; world texture %dx%d (%d%%); output height %d", layout->build, size.width, size.height,
+        (double)size.width / size.height, world.width, world.height, ss_display_world_percent(), ss_display_output_height());
 }
 
 void ss_enemy_bars_install(void);

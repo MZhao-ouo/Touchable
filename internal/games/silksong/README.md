@@ -5,6 +5,45 @@
 
 
 
+## 2026-10-30: 90 Hz option (build 40)
+
+- Settings > Silksong > Graphics > Refresh rate now offers 60 Hz, 90 Hz, and 120 Hz. The input display link asks for the selected rate (`CAFrameRateRangeMake(80, rate, rate)`). The game follows the rate that the screen gives, rounded to 60, 80, 90, or 120 Hz, and never above the selected rate. `ss_platform.c` accepts 80 and 90 Hz display events.
+- Not known yet: whether the iPhone 16 Pro Max panel runs at 90 Hz. If it cannot, the screen can give 80 Hz or stay at 120 Hz. At 120 Hz the 11.1 ms present minimum shows each frame for two refreshes. Check `Display event rate` and the present intervals (`上屏 ... 间隔 p5 / p50 / p95`) in `Documents/Logs/game.log`.
+- Tests: player settings tests pass. No device test yet.
+
+## 2026-10-30: World resolution and button style (build 39, installed on the iPhone, no device test yet)
+
+- Cause of the combat frame drops (iPhone test, `.touchable/work/silksong/reports/combat-perf-20261030/`): in heavy fights the game GPU time is 7–10 ms at 720p. The 120 Hz frame is 8.33 ms. The game thread then waits for a returned swapchain texture (`pq_wait_ms`), and frames show for two display refreshes. The game's own CPU work is small.
+- New setting, Settings > Silksong > Graphics > World resolution: Full (100%), 90%, 80%, 70%. The iOS app sets `SS_WORLD_SCALE`. `ss_display_world_resolution` scales only the world texture record (1252x576 at 720p; 1000x460 at 80%). The output, HUD, and text keep their size.
+- New setting, Touch controls > Button style: Liquid Glass (default) or Simple. Simple is a flat dark fill with a thin outline, without the glass effect, the glass container, or the dark layer behind the controls.
+- Tests: `test_display.c` passes (sizes and refused values of `SS_WORLD_SCALE`). The player settings tests in `test_build_tools.py` pass. Build 39 (`IPA/silksong/Silksong-build39-20261030-213635-7497a1.ipa`) is installed on the iPhone. No device test of the two settings yet.
+- The Metal Toolchain component (27B47) was installed again with `xcodebuild -downloadComponent MetalToolchain` after the Xcode update.
+
+## 2026-10-27: Re-signed for 7 more days (build 38 unchanged)
+
+User request: "Resign my apps". The free-team profiles of both games expired on 2026-10-27 at 04:49 and 04:53 UTC.
+
+- Silksong build 38 was signed again without new code: an incremental xcodebuild in its run folder fetched profile `1290ffdd…` (expires 2026-11-03 05:01 UTC), and `codesign` signed the app with its existing entitlements. New IPA: `IPA/silksong/Silksong-build38-resigned-20261027-010734.ipa`; the previous IPA is in `.touchable/archive/ipa/silksong/resign-20261027-010734/`. Installed on the iPhone (saves backed up to `phone-before-install-20261027-011104-32f4ab`).
+- Rhythm Heaven build 47 was re-signed the same way (profile `62d4cb2c…`) and installed on the iPhone.
+- After the iPad mini was unlocked, both apps were signed again with profiles for both devices (Silksong `162f5f4d…`, Rhythm Heaven `d1508813…`, both expire 2026-11-03 about 05:15 UTC). IPAs: `Silksong-build38-resigned-20261027-011557.ipa`, `RhythmHeaven-build47-resigned-20261027-011557.ipa`. Installed on the iPad mini (Silksong build 33 there became build 38); saves backed up to `phone-before-install-20261027-012014-ec1e3c` (Silksong) and `phone-before-install-20261027-012623-1f1160` (Rhythm Heaven). The first Rhythm Heaven attempt stopped at the backup (connection interrupted) and installed nothing; the retry passed.
+
+## 2026-10-27: ZL slides like ZR (build 38)
+
+User request: "B should also be able to slide to ZL".
+
+- `internal/platform/ios/App.m`: ZL is a sliding button like A, B, X, Y, and ZR. A finger on B (or another sliding button) presses ZL when it slides onto it, and a touch that starts on ZL can slide to the others.
+- iOS Simulator: B, slide to ZL, back to B gives 0x0002, 0x0102, 0x0002; ZL, slide to Y gives 0x0100, 0x0108.
+- Build 38 (`IPA/silksong/Silksong-build38-20261027-004720-09d9a2.ipa`) is installed on the iPhone; no device test yet.
+
+## 2026-10-27: One press look for all touch buttons (build 37)
+
+User request: "Button touch effects are kind of buggy. Fix them".
+
+- Before: a direct press showed Apple's glass response (the button grows and lights up), a slide-held button a dim drawn mark, and the first button of a slide from ZR lost its look while it stayed pressed.
+- `internal/platform/ios/App.m`: every pressed button shows the same drawn mark (as bright as the lit D-pad arm), on at the touch and off at the release. Pad buttons use non-interactive glass; they do not use UIKit's touch tracking. This also applies to the Rhythm Heaven buttons.
+- Build 37 (`IPA/silksong/Silksong-build37-20261027-003254-f9ae23.ipa`) is installed on the iPhone; no device test yet. It also contains the uncommitted Rhythm Heaven App.m changes of the other session (voice play, two-player halves), which Silksong does not use.
+- iOS Simulator: input unchanged; slides and two-finger presses show the mark on each held button. See [the press look record](../../../.touchable/work/silksong/reports/press-look-20261027/README.md).
+
 ## 2026-10-26: Enemy health bars (build 36, installed on the iPhone, no device test yet)
 
 User request: "build the health bars first" (GitHub issue #10).

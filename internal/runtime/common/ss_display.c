@@ -5,7 +5,7 @@
 #include <stdlib.h>
 
 static _Atomic uint64_t view_size = (uint64_t)720 << 32 | 1280;
-static _Atomic int output_height;
+static _Atomic int output_height, world_percent;
 
 void ss_display_set_view(double width, double height) {
     if (!isfinite(width) || !isfinite(height) || width <= 0 || height <= 0) return;
@@ -40,13 +40,39 @@ int ss_display_output_height(void) {
     return height < limit ? height : limit;
 }
 
+static ss_display_size view_resolution(int height) {
+    uint64_t size = atomic_load(&view_size);
+    int width = (int)(floor((double)(uint32_t)size * height / 720 / 4 + 0.5) * 4);
+    return (ss_display_size){width, height};
+}
+
 /* requested_height is in the 720-line reference space of the game records.
    The result is scaled to the output height. */
 ss_display_size ss_display_resolution(int requested_height) {
-    uint64_t size = atomic_load(&view_size);
     int output = ss_display_output_height();
     int reference = requested_height > 0 && requested_height < 720 ? requested_height : 720;
     int height = output == 720 ? reference : (int)(floor((double)reference * output / 720 / 2 + 0.5) * 2);
-    int width = (int)(floor((double)(uint32_t)size * height / 720 / 4 + 0.5) * 4);
-    return (ss_display_size){width, height};
+    return view_resolution(height);
+}
+
+/* SS_WORLD_SCALE requests the world texture size in percent, from 50 to 100. The default is 100. */
+int ss_display_world_percent(void) {
+    int percent = atomic_load(&world_percent);
+    if (percent) return percent;
+    percent = 100;
+    const char *value = getenv("SS_WORLD_SCALE");
+    if (value && *value) {
+        char *end;
+        long requested = strtol(value, &end, 10);
+        if (!*end && requested >= 50 && requested <= 100) percent = (int)requested;
+    }
+    atomic_store(&world_percent, percent);
+    return percent;
+}
+
+ss_display_size ss_display_world_resolution(int requested_height) {
+    ss_display_size size = ss_display_resolution(requested_height);
+    int percent = ss_display_world_percent();
+    if (percent == 100) return size;
+    return view_resolution((int)(floor((double)size.height * percent / 100 / 2 + 0.5) * 2));
 }

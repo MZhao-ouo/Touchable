@@ -165,6 +165,38 @@ static void check_render_height(void) {
     set_resolution = NULL;
 }
 
+static void expect_world(const char *value, int percent, int width, int height) {
+    atomic_store(&world_percent, 0);
+    if (value) assert(setenv("SS_WORLD_SCALE", value, 1) == 0);
+    else assert(unsetenv("SS_WORLD_SCALE") == 0);
+    assert(ss_display_world_percent() == percent);
+    ss_display_size size = ss_display_world_resolution(576);
+    assert(size.width == width && size.height == height);
+}
+
+static void check_world_scale(void) {
+    ss_display_set_view(2868, 1320);
+    expect_world(NULL, 100, 1252, 576);
+    expect_world("100", 100, 1252, 576);
+    expect_world("80", 80, 1000, 460);
+    expect_world("70", 70, 876, 404);
+    expect_world("50", 50, 624, 288);
+    const char *ignored[] = {"", "49", "101", "80%", "-80", "low"};
+    for (unsigned i = 0; i < sizeof(ignored) / sizeof(ignored[0]); ++i) expect_world(ignored[i], 100, 1252, 576);
+    /* The scale keeps the view aspect and changes only the world texture. */
+    expect_world("80", 80, 1000, 460);
+    assert(fabs(1000.0 / 460 - 2868.0 / 1320) < 0.01);
+    expect_resolution(720, 1564, 720);
+    expect_resolution(576, 1252, 576);
+    atomic_store(&output_height, 0);
+    assert(setenv("SS_RENDER_HEIGHT", "1080", 1) == 0);
+    ss_display_size size = ss_display_world_resolution(576);
+    assert(size.width == 1224 && size.height == 564);   /* 80% of 1532x706 */
+    assert(unsetenv("SS_RENDER_HEIGHT") == 0);
+    atomic_store(&output_height, 0);
+    expect_world(NULL, 100, 1252, 576);
+}
+
 static void expect_install_rejection(module_t *module, const ss_display_layout *layout, int error) {
     pid_t pid = fork();
     assert(pid >= 0);
@@ -257,6 +289,7 @@ int main(void) {
         check_install_data_only(&layouts[i]);
     check_native_forwarding();
     check_render_height();
-    puts("PASS: phone display and recommended world RT dimensions, lower resolutions, portrait layout, invalid views, register ABI, native forwarding, SS_RENDER_HEIGHT with the 1920-wide window limit, pinned data guards for each supported main build, unchanged heights/max sizes, and read-only guest code");
+    check_world_scale();
+    puts("PASS: phone display and recommended world RT dimensions, lower resolutions, portrait layout, invalid views, register ABI, native forwarding, SS_RENDER_HEIGHT with the 1920-wide window limit, SS_WORLD_SCALE, pinned data guards for each supported main build, unchanged heights/max sizes, and read-only guest code");
     return 0;
 }

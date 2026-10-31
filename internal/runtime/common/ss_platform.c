@@ -18,10 +18,11 @@ static _Alignas(16) uint8_t notification_event[0x100];
 static _Alignas(16) uint8_t health_event[0x100];
 static int notification_ready, health_ready;
 static void *vsync_event;
-/* The display event rate in Hz: 60 or 120. SS_DISPLAY_HZ in the game profile selects 120.
-   The iOS app lowers it to 60 when the screen runs at 60 Hz (Low Power Mode, heat, or a 60 Hz screen). */
+/* The display event rate in Hz: 60, 80, 90, or 120. SS_DISPLAY_HZ in the game profile selects the rate.
+   The iOS app gives the rate that the screen runs at, up to the selected rate (60 Hz in Low Power Mode,
+   when the device is hot, or on a 60 Hz screen). */
 static _Atomic int display_hz;
-static int display_hz_valid(int hz) { return hz == 60 || hz == 120; }
+static int display_hz_valid(int hz) { return hz == 60 || hz == 80 || hz == 90 || hz == 120; }
 int ss_display_hz(void) {
     int hz = atomic_load(&display_hz);
     if (hz) return hz;
@@ -80,7 +81,7 @@ static void *vsync_run(void *unused) {
     }
     return NULL;
 }
-HLE_FORCE("_ZN2nn2vi20GetDisplayVsyncEventEPNS_2os15SystemEventTypeEPNS0_7DisplayE", "Provide a 60 or 120 Hz display event", Result, ss_display_event, void *event, void *display) {
+HLE_FORCE("_ZN2nn2vi20GetDisplayVsyncEventEPNS_2os15SystemEventTypeEPNS0_7DisplayE", "Provide a 60, 80, 90, or 120 Hz display event", Result, ss_display_event, void *event, void *display) {
     (void)display;
     if (vsync_event && vsync_event != event) die("Multiple display events are not supported");
     if (!vsync_event) {

@@ -4,7 +4,7 @@
   "display_name": "丝之歌",
   "product_name": "Silksong",
   "bundle_id": "com.mmmz.TouchableSilksong",
-  "build_version": 36,
+  "build_version": 40,
   "title_id": "010013c00e930000",
   "profile": "profile.json",
   "content_dir": "v655360",
@@ -74,8 +74,10 @@
     "deployment_target": "26.0",
     "player_settings": {
       "render_heights": [720, 900, 1080, 1440],
-      "display_hz": [60, 120],
-      "health_bars": true
+      "display_hz": [60, 90, 120],
+      "world_scales": [70, 80, 90],
+      "health_bars": true,
+      "control_style": true
     }
   },
   "host": {
