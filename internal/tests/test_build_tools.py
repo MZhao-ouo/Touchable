@@ -133,6 +133,34 @@ class PlayerSettingsTests(unittest.TestCase):
             self.assertIsNone(stage_settings_bundle(None, out))
             self.assertFalse(out.exists())
 
+    def test_rhythm_heaven_offers_voice_play(self):
+        data = json.loads((ROOT / 'games/rhythm-heaven/game.json').read_text())
+        settings = shell_player_settings(data['ios'], {})
+        self.assertTrue(settings['voice_play'])
+        with tempfile.TemporaryDirectory() as temp:
+            out = Path(temp) / 'Settings.bundle'
+            stage_settings_bundle(settings, out)
+            with (out / 'Root.plist').open('rb') as stream:
+                items = plistlib.load(stream)['PreferenceSpecifiers']
+            # No resolution or rate choices, so no empty Graphics group.
+            self.assertEqual([i.get('Title') for i in items if i['Type'] == 'PSGroupSpecifier'], ['Voice'])
+            self.assertEqual([(i['Key'], i['DefaultValue']) for i in items if i['Type'] == 'PSToggleSwitchSpecifier'],
+                             [('TouchableVoicePlay', False)])
+            self.assertEqual([(i['Key'], i['DefaultValue'], i['Values']) for i in items if i['Type'] == 'PSMultiValueSpecifier'],
+                             [('TouchableVoiceSensitivity', 'medium', ['low', 'medium', 'high'])])
+            with (out / 'zh-Hans.lproj' / 'Root.strings').open('rb') as stream:
+                self.assertEqual(plistlib.load(stream)['VoicePlay'], '用声音游玩')
+        with self.assertRaises(WorkspaceError):
+            shell_player_settings({'player_settings': {'voice_play': 'yes'}}, {})
+
+    def test_microphone_text_is_localized_with_the_names(self):
+        with tempfile.TemporaryDirectory() as temp:
+            out = Path(temp)
+            stage_display_names({'en': 'Game', 'zh-Hans': '游戏'}, out, {'zh-Hans': {'NSMicrophoneUsageDescription': '说明'}})
+            with (out / 'zh-Hans.lproj' / 'InfoPlist.strings').open('rb') as stream:
+                self.assertEqual(plistlib.load(stream), {'CFBundleDisplayName': '游戏', 'NSMicrophoneUsageDescription': '说明'})
+
+
 class DisplayNameTests(unittest.TestCase):
     def test_every_game_has_an_english_default_name(self):
         for game in ('rhythm-heaven', 'silksong'):

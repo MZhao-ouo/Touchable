@@ -1,5 +1,54 @@
 # Rhythm Heaven
 
+## 2026-10-26: Voice play with echo cancellation (build 47)
+
+User feedback on build 46: the game sound still triggered presses, and real claps became too hard to trigger. The phone log (`.touchable/work/rhythm-heaven/reports/voice-play-20261026/phone-log-1/`) showed why: counted sounds peaked at 0.15 to 0.92 while the level-based "game sound" estimate stayed at 0 to 0.25, so short game cues and claps overlapped.
+- `ss_audio_renderer.c`: when the app registers a voice input handler (`ss_audio_set_input_handler()`, `ss_audren.h`), the game's output unit is Apple's voice-processing unit with its input enabled. Its echo canceller removes the sound this same unit plays, so the handler gets the player's sound without the game's. Automatic gain is off. If the unit cannot start, the plain output is used without voice input. The Mac host and voice play off are unchanged.
+- `App.m`: the AVAudioEngine listener and the build 46 level gate are removed. `voiceInput()` gets the cleaned input on the audio thread. Sensitivity floors are lower again: Low 0.18 (6 times the average), Medium 0.10 (5 times, default), High 0.05 (4 times).
+- Checks: 61 Python tests, both Mac host builds (no warnings), a 25 s Rhythm Heaven host run (audio renderer on CoreAudio), and the Xcode device build passed. IPA `IPA/rhythm-heaven/RhythmHeaven-build47-voice-aec-20261026.ipa` (SHA-256 `13e9297f4c226b2b97f2a773ad2d7f561714938c1fc5b8596478332e5c3b2628`), installed on the iPhone on 2026-10-26 (save backup `phone-before-install-20261026-234250-514996`). Not tested on the device. Known effect of the voice-processing unit: the game sound can be quieter and slightly processed while voice play is on.
+
+## 2026-10-26: Voice play ignores the game's own sound, with a sensitivity setting (build 46)
+
+User feedback on build 45: voice play works, but the microphone picks up the game's sound from the speaker, and presses come too easily.
+- `ss_audio_renderer.c` publishes the level of the sound the speaker plays now (`ss_audio_output_level()`: the callback peak, held about 60 ms).
+- `App.m`: the expected leak into the microphone is that level times the system volume times a leak gain that the listener learns while the game plays (starting high, for the speaker). A sound counts only when it is 2.5 times the expected leak. With headphones the gain learns down to almost zero. The log has "Voice play: press N (peak, game sound)" and "N sounds taken as game sound".
+- New setting "Sensitivity" (`TouchableVoiceSensitivity`): Low (floor 0.25, 8 times the recent average), Medium (default; 0.15, 6 times), High (0.08, 4 times). Build 45 used 0.06 and 4 times, which was too easy.
+- Checks: 61 Python tests, both Mac host builds (no warnings), and the Xcode device build passed. IPA `IPA/rhythm-heaven/RhythmHeaven-build46-voice-gate-20261026.ipa` (SHA-256 `58a240250b3121533cefba3b63ddc87d557ca270326c493733e05aee398c92a2`), installed on the iPhone on 2026-10-26 (save backup `phone-before-install-20261026-233209-976134`). The gate values are estimates; not tested with real sounds.
+
+## 2026-10-26: Voice play (build 45)
+
+User request: an optional "voice play" setting that plays with the microphone and forces TV mode, and that tells the player to adjust the delay.
+- Settings app > Rhythm Heaven > "Voice play" (`TouchableVoicePlay`, off by default; `ios.player_settings.voice_play` in `game.json`). It takes effect the next time the game starts. The footer (English and Simplified Chinese) tells the player to adjust the delay in the game: Start Menu > 电视机延迟校正 (TV latency adjustment). The first start with voice play on shows the same reminder once.
+- When on: the audio session records and plays (speaker output, Bluetooth A2DP and AirPlay allowed), and the game stays in TV mode whatever the audio output is, so its latency adjustment is available. The microphone permission text is in Info.plist and `zh-Hans.lproj/InfoPlist.strings`.
+- Detection (`App.m`, `startVoicePlay()`): an `AVAudioSinkNode` reads the input at the session IO buffer size (`audio_io_buffer_seconds` 0.005). A 32-sample peak above 0.06 and above four times the recent average level presses A for player 1 (`ss_input_press_player()`); a new press waits 100 ms. Presses happen only in a single-player level, never in menus, the pause menu, or two-player levels. The log has "Voice play: listening/paused" and one "Voice play: press N" line for each press.
+- Limits: the speaker sound can trigger presses (headphones advised); only A is supported; holds are not; the thresholds are fixed and untested with real sounds.
+- Checks: 61 Python tests (new voice play settings and localized microphone text cases) and the Xcode device build (no `App.m` warnings) passed. IPA `IPA/rhythm-heaven/RhythmHeaven-build45-voice-play-20261026.ipa` (SHA-256 `94343905e429320d6770b562d62f6d29eb38d8a0143c4edbfdb3a0990dff2a70`). Build 44 had the same feature without the delay reminder and was never installed. Installed on the iPhone on 2026-10-26 (save backup `phone-before-install-20261026-231847-e0a4a9`). Not tested on a device yet.
+
+## 2026-10-26: Multiplayer touch look and "A or ◀" levels (build 43)
+
+User feedback on build 42: the split-screen press effect looked bad, and levels that say "A or ◀" should show A only.
+- `App.m` `SplitZone`: the white fill over the whole half is gone. Each finger gets the single-player touch glow with its key as the caption. An A-only level shows no labels or lines, like the single-player A area. A two-key level shows faint key labels and thin lines, like the single-player left area.
+- `rh_touch.c`: onion and tono2 ("按A或◀") set the new hint bit `SS_TOUCH_EITHER` (`ss_touch.h`). In multiplayer these levels give A to each half. Single player keeps its ◀ area. Commander, trolley, foot_race, and quiz keep two keys, because there the second key is its own action.
+- Checks: `test_touch` (new onion, tono2, and commander cases), the Mac host build, and the Xcode device build passed. IPA `IPA/rhythm-heaven/RhythmHeaven-build43-split-feedback-20261026.ipa` (SHA-256 `bed4438d38c7bea3dcef0bcacfee9c63808e1a9d7989e0afc405eac9e7b1f7a3`), installed on the iPhone on 2026-10-26 (save backup `phone-before-install-20261026-144526-95aa1e`). The look was not checked on a device.
+
+## 2026-10-26: Touch setup of multiplayer members (build 42)
+
+User report: the players could not be set up with touch. The member select had no touch targets, and touch only acted as player 1.
+- `runtime/rh_menu.c` hooks the member select input (vtable slot `main+0xd1cdf0`, original `main+0x1e60a0`). Touch sets up one player at a time: player 1 picks a name, then an avatar, then player 2. A tap on another name or avatar walks that player's cursor with that player's D-pad presses (`ss_input_press_player()`); a tap on the selected item presses that player's A. Names that another player holds take no tap. The start dialog ("没错！" and "等一下") takes one tap, like other dialogs.
+- Layout notes (for main Build ID 03ff4a3bec96bde3): player states at screen `+0x40f8` (0 name, 2 avatar, 3 and 4 change over, 5 done), dialog flag `+0x40f4`, dialog selector `+0x3e88`, name grid `+0x3e80` (cursor column `+0x980`, row `+0x990`, cell nodes `+0x768`, taken flags `+0x8a8`), avatar strips `+0x3e90` (index `+0x2d0`, item offsets `+0x270`, active `+0x298`). The selected avatar sits at the chosen name cell's center.
+- Mac host test: player 1 chose 妈妈 and red, player 2 chose 谁? and green, all by select-then-confirm taps; 等一下 went back to editing; 没错！ opened the multiplayer map with both members. The targets matched the drawn names and avatars.
+- Xcode device build passed. IPA `IPA/rhythm-heaven/RhythmHeaven-build42-member-touch-20261026.ipa` (SHA-256 `3c3cee6ccfcaf5ff35e213391c665a9627d2aec17aa57031a4de891b26e11cc5`), installed on the iPhone on 2026-10-26 (save backup `phone-before-install-20261026-141431-aa631b`). Not tested on the device; 3 or 4 players need controllers for their own turns.
+
+## 2026-10-26: Two players on one touch screen (build 41)
+
+User request: make multiplayer playable for two players on the touch screen, and keep 2 to 4 players with controllers.
+- Runtime (`internal/runtime/common/ss_input.c`): the runtime had one controller only; the controller applet always answered "1 player". Now each player has its own buttons (`ss_input_set_player()`). In multiplayer (the game supports the single Joy-Con styles 0x18), npad ids 0 to N-1 are full-key controllers, where N is the count the applet asks for (2 to 4; default 2). The applet result reports N players. Silksong supports styles 0x7 only and keeps one controller.
+- App (`App.m`): in a multiplayer level the screen splits in the middle. The left half is player 1, the right half is player 2. A level with a second key (◀ or B: commander, onion, tono2, trolley, foot_race, quiz) splits each half: player 1 has the second key above and A below; player 2 has A above and the second key below. Other levels give A to each half (konkon is treated as A only; its keys are unknown). B, −, +, and the tutorial buttons stay. Menus stay single-touch: any player may control them.
+- Real controllers: in multiplayer, each controller is one player in connection order (players 1 to 4); the touch halves add players 1 and 2. Outside multiplayer, all controllers still act as player 1.
+- Multiplayer map: the map is drawn 1.1 times larger and moved by (30, 204) in world 2, so the touch targets missed the icons. The targets now use that transform.
+- Mac host test (`.touchable/work/rhythm-heaven/reports/multi-touch-20261026/`): with test input for player 2 (`SS_INPUT_FILE` lines "mask x y player"), the 2-player select moved and confirmed both cursors separately, the game listed Player, a second player, and two COM players, and the onion level showed both players. Player 2's presses reached the level; that round was player 1's turn, so a player 2 turn was not checked. Multiplayer map taps selected and opened the onion level.
+- Not tested: the split touch layout (iOS only), 3 or 4 players, real controllers, and any device. `test_touch`, `test_menu`, both Mac host builds, and the Xcode device build (38 warnings, none in changed files) passed. IPA `IPA/rhythm-heaven/RhythmHeaven-build41-two-players-20261026.ipa` (SHA-256 `e7bb1eee4e0f84959c6f5948c6b6b18446af56b49e064eb36f42a96c6b75414a`); installed on the iPhone on 2026-10-26 (save backup `.touchable/saves/rhythm-heaven/phone-before-install-20261026-132737-8d483d/`). The iPad mini keeps build 40.
+
 
 ## 2026-10-24: Upstream graphics update; translation stays on the game thread (source change, no build)
 

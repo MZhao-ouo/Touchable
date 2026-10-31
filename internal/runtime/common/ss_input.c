@@ -10,8 +10,6 @@ typedef struct {
     uint32_t attributes, reserved;
 } ss_pad_state;
 _Static_assert(sizeof(ss_pad_state) == 0x28, "Npad ABI");
-static _Atomic uint64_t buttons;
-static _Atomic int32_t axis_x, axis_y;
 static _Atomic uint32_t styles = 3;
 static uint32_t player = 0x20;
 static uint32_t hold_type, activation_mode, communication_mode;
@@ -21,12 +19,28 @@ void hle_signal_system_event(void *);
 /* A touch tap can be shorter than one game frame. Each new press stays visible for at least
  * SS_PRESS_HOLD_NS so that a game polling once per frame still sees it. */
 #define SS_PRESS_HOLD_NS 25000000ull
-static _Atomic uint64_t press_ns[64];
-void ss_input_set(uint64_t mask, int32_t x, int32_t y) {
-    uint64_t old = atomic_exchange(&buttons, mask), pressed = mask & ~old, now = guest_ns();
-    for (int bit = 0; pressed; ++bit, pressed >>= 1) if (pressed & 1) atomic_store(&press_ns[bit], now ? now : 1);
-    atomic_store(&axis_x, x); atomic_store(&axis_y, y);
+/* One controller for each player. Slot 0 is the main controller (touch and the first real controller).
+   Slots 1-3 are the other players in multiplayer. */
+typedef struct {
+    _Atomic uint64_t buttons, press_ns[64];
+    _Atomic int32_t x, y;
+} ss_slot;
+static ss_slot slots[4];
+static void slot_set(ss_slot *slot, uint64_t mask, int32_t x, int32_t y) {
+    uint64_t old = atomic_exchange(&slot->buttons, mask), pressed = mask & ~old, now = guest_ns();
+    for (int bit = 0; pressed; ++bit, pressed >>= 1) if (pressed & 1) atomic_store(&slot->press_ns[bit], now ? now : 1);
+    atomic_store(&slot->x, x); atomic_store(&slot->y, y);
 }
+void ss_input_set(uint64_t mask, int32_t x, int32_t y) { slot_set(&slots[0], mask, x, y); }
+void ss_input_set_player(int index, uint64_t mask, int32_t x, int32_t y) {
+    if (index >= 0 && index < 4) slot_set(&slots[index], mask, x, y);
+}
+/* Multiplayer: the game supports the single Joy-Con styles (0x18) and asks the controller applet for
+   2 to 4 players. Then npad ids 0 to N-1 are full-key controllers, one for each slot, and the handheld
+   id is off. The player count stays from the last applet call; the game keeps its members in the save. */
+static _Atomic int applet_players = 2;
+static int multiplayer(void) { return atomic_load(&styles) & 0x18 ? atomic_load(&applet_players) : 0; }
+int ss_input_players(void) { int count = multiplayer(); return count ? count : 1; }
 static _Atomic uint64_t touch_left = SS_TOUCH_MENU;
 void ss_touch_left_set(int layout, int first, int second, int extra) {
     uint64_t value = (uint64_t)(layout & 0xff) | (uint64_t)(first & 0xff) << 8 | (uint64_t)(second & 0xff) << 16 |
@@ -36,14 +50,16 @@ void ss_touch_left_set(int layout, int first, int second, int extra) {
     atomic_store(&touch_left, value | ((old >> 32) + 1) << 32);
 }
 uint64_t ss_touch_left_get(void) { return atomic_load(&touch_left); }
-void ss_touch_press(uint64_t mask) {
+void ss_input_press_player(int index, uint64_t mask) {
+    if (index < 0 || index > 3) return;
     uint64_t now = guest_ns();
-    for (int bit = 0; mask; ++bit, mask >>= 1) if (mask & 1) atomic_store(&press_ns[bit], now ? now : 1);
+    for (int bit = 0; mask; ++bit, mask >>= 1) if (mask & 1) atomic_store(&slots[index].press_ns[bit], now ? now : 1);
 }
-static uint64_t held_buttons(void) {
-    uint64_t mask = atomic_load(&buttons), now = guest_ns();
+void ss_touch_press(uint64_t mask) { ss_input_press_player(0, mask); }
+static uint64_t held_buttons(ss_slot *slot) {
+    uint64_t mask = atomic_load(&slot->buttons), now = guest_ns();
     for (int bit = 0; bit < 64; ++bit) {
-        uint64_t at = atomic_load_explicit(&press_ns[bit], memory_order_relaxed);
+        uint64_t at = atomic_load_explicit(&slot->press_ns[bit], memory_order_relaxed);
         if (at && now - at < SS_PRESS_HOLD_NS) mask |= 1ull << bit;
     }
     return mask;
@@ -52,6 +68,8 @@ static uint32_t player_style(uint32_t id) {
     /* The game checks the controller style before it offers the TV latency calibration.
        Console mode presents a full-key controller for the selected player or player 0.
        Handheld mode keeps the prior handheld/full-key behavior. */
+    int count = multiplayer();
+    if (count) return id < (uint32_t)count ? 1u & atomic_load(&styles) : 0;
     int tv = dm_opmode() != 0;
     if (tv) {
         if (id != player && id != 0) return 0;
@@ -62,8 +80,9 @@ static uint32_t player_style(uint32_t id) {
 static void pad_read(ss_pad_state *out, uint32_t id, uint32_t style) {
     *out = (ss_pad_state){.sample = guest_ns() / 1000000};
     if (player_style(id) & style) {
-        out->buttons = held_buttons();
-        out->lx = atomic_load(&axis_x); out->ly = atomic_load(&axis_y);
+        ss_slot *slot = &slots[multiplayer() ? id : 0];
+        out->buttons = held_buttons(slot);
+        out->lx = atomic_load(&slot->x); out->ly = atomic_load(&slot->y);
         out->attributes = 3;
         if (out->buttons) {
             static int logged;
@@ -122,16 +141,29 @@ PAD_STATE("16NpadJoyDualState", ss_pad_joy_dual, 4)
 PAD_STATE("16NpadJoyLeftState", ss_pad_joy_left, 8)
 PAD_STATE("17NpadJoyRightState", ss_pad_joy_right, 16)
 HLE_FORCE("_ZN2nn3hid14DisconnectNpadERKj", "The phone controller stays connected", void, ss_pad_disconnect, const uint32_t *id) { (void)id; }
+/* ControllerSupportArg starts with the minimum and the maximum player count. A request for 2 to 4
+   players sets the multiplayer count; the phone and the real controllers are already connected. */
+static int applet_count(const void *argument) {
+    const uint8_t *arg = argument;
+    int maximum = arg ? arg[1] : 1;
+    if (maximum >= 2) {
+        int count = maximum > 4 ? 4 : maximum;
+        if (atomic_exchange(&applet_players, count) != count) ss_input_style_changed();
+        LOG("Input: controller applet asks for %d to %d players; %d players connected", arg[0], arg[1], count);
+    }
+    return ss_input_players();
+}
 /* Controller applet: the phone controller is already connected and selected. */
 HLE_FORCE("_ZN2nn3hid21ShowControllerSupportERKNS0_20ControllerSupportArgE", "Controller applet: one local controller",
-          Result, ss_pad_support, const void *argument) { (void)argument; return RES_OK; }
+          Result, ss_pad_support, const void *argument) { applet_count(argument); return RES_OK; }
 HLE_FORCE("_ZN2nn3hid21ShowControllerSupportEPNS0_27ControllerSupportResultInfoERKNS0_20ControllerSupportArgE", "Controller applet: one local controller",
           Result, ss_pad_support_result, uint8_t *result, const void *argument) {
-    (void)argument;
+    int count = applet_count(argument);
+    uint32_t selected = count > 1 ? 0 : player;
     dm_guest_write_prepare(result, 8);
     memset(result, 0, 8);
-    result[0] = 1;
-    memcpy(result + 4, &player, 4);
+    result[0] = (uint8_t)count;
+    memcpy(result + 4, &selected, 4);
     return RES_OK;
 }
 HLE_FORCE("_ZN2nn3hid19GetPlayerLedPatternERKj", "One local controller", uint32_t, ss_pad_led, const uint32_t *id) { return player_style(*id) ? 1 : 0; }

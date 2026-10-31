@@ -64,4 +64,9 @@ void ss_ar_master_volume(ss_ar_renderer *renderer, float volume);
 void ss_ar_update(ss_ar_renderer *renderer);
 /* Mix one frame into interleaved stereo PCM16. */
 void ss_ar_render(ss_ar_renderer *renderer, int16_t *stereo);
+
+/* Voice play (iOS, ss_audio_renderer.c): set before the game opens its renderer. The handler gets the
+   echo-cancelled microphone as mono float samples on the audio thread. */
+typedef void (*ss_audio_input_handler)(const float *samples, uint32_t frames, int rate);
+void ss_audio_set_input_handler(ss_audio_input_handler handler);
 #endif

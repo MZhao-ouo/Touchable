@@ -99,15 +99,19 @@ void ss_haptics_platform_apply(ss_haptic_output output) { (void)output; }
 static void *input_file(void *argument) {
     const char *path = argument;
     void ss_input_set(uint64_t, int32_t, int32_t);
-    uint64_t previous = 0; int old_x = 0, old_y = 0;
+    void ss_input_set_player(int, uint64_t, int32_t, int32_t);
+    uint64_t previous = 0; int old_x = 0, old_y = 0, old_index = 0;
     for (;;) {
         FILE *file = fopen(path, "r");
         if (file) {
-            unsigned long long mask; int x, y;
-            if (fscanf(file, "%llx %d %d", &mask, &x, &y) == 3 &&
-                (mask != previous || x != old_x || y != old_y)) {
-                ss_input_set(mask, x, y); previous = mask; old_x = x; old_y = y;
-                LOG("TEST input mask=%#llx stick=%d,%d", mask, x, y);
+            /* "mask x y [player]": the optional player index (0 to 3) tests multiplayer. */
+            unsigned long long mask; int x, y, index = 0;
+            if (fscanf(file, "%llx %d %d %d", &mask, &x, &y, &index) >= 3 &&
+                (mask != previous || x != old_x || y != old_y || index != old_index)) {
+                if (index != old_index && old_index > 0) ss_input_set_player(old_index, 0, 0, 0);
+                if (index > 0) ss_input_set_player(index, mask, x, y); else ss_input_set(mask, x, y);
+                previous = mask; old_x = x; old_y = y; old_index = index;
+                LOG("TEST input mask=%#llx stick=%d,%d player %d", mask, x, y, index + 1);
             }
             fclose(file);
         }

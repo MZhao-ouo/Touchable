@@ -27,6 +27,7 @@ enum {
     SS_TOUCH_SHOW_DPAD = 1,   /* the small D-pad */
     SS_TOUCH_SHOW_X = 2,      /* an X button */
     SS_TOUCH_SHOW_Y = 4,      /* a Y button */
+    SS_TOUCH_EITHER = 8,      /* the left-area key only repeats A ("A or ◀"); multiplayer touch gives A only */
 };
 
 /* Called by the game adapter on any thread. `extra` holds SS_TOUCH_SHOW_* bits. */
@@ -36,6 +37,13 @@ uint64_t ss_touch_left_get(void);
 /* Called by the game adapter on any thread. The game sees the buttons in `mask` (NpadButton bits) as one
    short press, the same as a touch tap. A tap on a game object can so use the game's own input checks. */
 void ss_touch_press(uint64_t mask);
+/* Multiplayer. ss_input_players() is the number of players that the game uses now (1 outside multiplayer).
+   The platform layer sends the buttons of player 2 to 4 (index 1 to 3) with ss_input_set_player();
+   player 1 uses ss_input_set(). */
+int ss_input_players(void);
+void ss_input_set_player(int index, uint64_t mask, int32_t x, int32_t y);
+/* One short press for player `index` (0 to 3), like ss_touch_press() for player 1. */
+void ss_input_press_player(int index, uint64_t mask);
 
 static inline int ss_touch_layout(uint64_t hint) { return (int)(hint & 0xff); }
 static inline int ss_touch_first(uint64_t hint) { return (int)(hint >> 8 & 0xff); }

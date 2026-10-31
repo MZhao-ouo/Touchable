@@ -354,7 +354,11 @@ static int map_frame(void *scene, ss_pointer_frame *frame) {
         if (!icon || ((uint8_t *)icon)[0x84] != 1) continue;
         uint64_t id = 1 + world * 60 + col * 5 + row;
         unsigned flags = col == integer(scene, 0x5298) && row == integer(scene, 0x529c) ? SS_POINTER_SELECTED : 0;
-        target(frame, id, ox + col * width, oy + row * height, 160, 150, flags, -1);
+        float x = ox + col * width, y = oy + row * height, scale = 1;
+        /* The multiplayer map (world 2) draws the same grid 1.1 times larger and moved by (30, 204);
+           measured from its three rows and first columns in a host screenshot. */
+        if (world == 2) { scale = 1.1f; x = x * scale + 30; y = y * scale + 204; }
+        target(frame, id, x, y, 160 * scale, 150 * scale, flags, -1);
     }
     trace_frame(frame);
     /* Keep an empty map frame so a drag at the edge cannot fall back to a button press. */
@@ -433,6 +437,113 @@ static int pause_input(void *scene) {
         ss_pointer_publish(&frame);
     }
     return 1;
+}
+/* Multiplayer member select (main+0xd1cd28; input at main+0x1e60a0, commands at main+0x1e55a0).
+   Each player's state is at +0x40f8 + 4 * player: 0 picks a name, 1 changes over, 2 picks an avatar,
+   3 and 4 change over, 5 is done. +0x40f4 is set while the start dialog shows; its selector is at
+   +0x3e88 and takes one tap, like other dialogs. The name grid at +0x3e80 is shared: the
+   cursor of each player is at +0x980 (column) and +0x990 (row) + 4 * player; cell row * 4 + column has
+   its node at +0x768 and a taken flag at +0x8a8. Each player has an avatar strip at +0x3e90 + 8 * player:
+   index +0x2d0 (0 to 9), item offsets +0x270, active when +0x298 is 1. The strip shows over the
+   chosen name cell, with the selected avatar at the cell center.
+   Touch sets up one player at a time: player 1 picks a name and an avatar, then player 2. A tap on
+   another item walks that player's cursor with D-pad presses; a tap on the selected item presses A
+   for that player. */
+enum { MEMBER_NAME = 1, MEMBER_AVATAR = 2 };
+static double seconds(void);
+struct member_state { uint64_t owner, goal; int player, presses; double last; };
+static struct member_state member_walk;
+static int member_cursor(void *list, int player) {
+    return integer(list, 0x990 + 4 * player) * 4 + integer(list, 0x980 + 4 * player);
+}
+static int member_frame(void *scene, ss_pointer_frame *frame, int *player_out) {
+    if (integer(scene, 0x40f4)) return 0;
+    int players = ss_input_players(), player = -1;
+    if (players < 2 || players > 4) return 0;
+    for (int p = 0; p < players && player < 0; ++p) if (integer(scene, 0x40f8 + 4 * p) < 3) player = p;
+    if (player < 0) return 0;
+    int state = integer(scene, 0x40f8 + 4 * player);
+    *player_out = player;
+    *frame = (ss_pointer_frame){.owner = (uintptr_t)scene ^ (uint64_t)(player * 4 + state) << 56, .mode = SS_POINTER_MENU};
+    if (state == 0) {
+        void *list = ptr(scene, 0x3e80), *root = list ? ptr(list, 0x10) : NULL;
+        if (!sprite(root)) return 1;
+        int cursor = member_cursor(list, player);
+        for (int cell = 0; cell < 20; ++cell) {
+            float x = 0, y = 0;
+            if (cell != cursor && integer(list, 0x8a8 + 4 * cell)) continue;   /* another player has it */
+            if (!node_point(root, ptr(list, 0x768 + 8 * cell), &x, &y)) continue;
+            target(frame, (uint64_t)MEMBER_NAME << 8 | (unsigned)cell, x, y, 290, 110, cell == cursor ? SS_POINTER_SELECTED : 0, -1);
+        }
+    } else if (state == 2) {
+        /* The strip replaces the chosen name cell; the selected avatar sits at the cell center. */
+        uint8_t *strip = ptr(scene, 0x3e90 + 8 * player);
+        void *list = ptr(scene, 0x3e80), *root = list ? ptr(list, 0x10) : NULL;
+        if (!strip || strip[0x298] != 1 || !sprite(root)) return 1;
+        int index = integer(strip, 0x2d0);
+        float x = 0, y = 0;
+        if (index < 0 || index > 9 || !node_point(root, ptr(list, 0x768 + 8 * member_cursor(list, player)), &x, &y)) return 1;
+        x -= real(strip, 0x270 + 4 * index);
+        for (int item = 0; item < 10; ++item) {
+            float dx = real(strip, 0x270 + 4 * item);
+            if (fabsf(dx - real(strip, 0x270 + 4 * index)) > 200) continue;   /* outside the box */
+            target(frame, (uint64_t)MEMBER_AVATAR << 8 | (unsigned)item, x + dx, y, 96, 120, item == index ? SS_POINTER_SELECTED : 0, -1);
+        }
+    }
+    return 1;
+}
+/* One walk step per call. The next press waits until the game has read the previous press. */
+static void member_step(void *scene, uint64_t owner) {
+    if (!member_walk.goal) return;
+    int player = member_walk.player, kind = (int)(member_walk.goal >> 8), goal = (int)(member_walk.goal & 0xff);
+    int state = integer(scene, 0x40f8 + 4 * player), now = -1, button = -1;
+    if (kind == MEMBER_NAME && state == 0) {
+        now = member_cursor(ptr(scene, 0x3e80), player);
+        if (now / 4 != goal / 4) button = goal / 4 < now / 4 ? 13 : 15;
+        else if (now != goal) button = goal < now ? 12 : 14;
+    } else if (kind == MEMBER_AVATAR && state == 2) {
+        now = integer(ptr(scene, 0x3e90 + 8 * player), 0x2d0);
+        if (now != goal) button = goal < now ? 12 : 14;
+    }
+    if (button < 0 || owner != member_walk.owner || member_walk.presses >= 12) {
+        if (trace) LOG("POINTER member walk ends at %d after %d presses", now, member_walk.presses);
+        member_walk.goal = 0;
+        return;
+    }
+    double time = seconds();
+    if (time - member_walk.last < 0.07) return;
+    ss_input_press_player(player, 1ull << button);
+    member_walk.presses++;
+    member_walk.last = time;
+}
+static void member_input(void *scene) {
+    ss_pointer_frame frame;
+    int player = 0;
+    void *confirm = ptr(scene, 0x3e88);   /* the start dialog: "没错！" and "等一下" */
+    if (integer(scene, 0x40f4) && confirm && selector_input(confirm, ptr(confirm, 0x18), scene)) member_walk.goal = 0;
+    else if (member_frame(scene, &frame, &player)) {
+        frame.token = ss_pointer_publish(&frame);
+        trace_frame(&frame);
+        reset_gesture(frame.token);
+        member_step(scene, frame.owner);
+        ss_pointer_event event;
+        while (ss_pointer_take(frame.token, &event)) {
+            ss_pointer_action action = ss_pointer_track(&gesture, event);
+            if (!(action.flags & SS_POINTER_TAP)) continue;
+            int hit = ss_pointer_hit(&frame, action.x, action.y);
+            if (hit < 0) continue;
+            const ss_pointer_target *item = &frame.targets[hit];
+            if (item->flags & SS_POINTER_SELECTED) {
+                ss_input_press_player(player, 1ull << 0);
+                member_walk.goal = 0;
+            } else {
+                member_walk = (struct member_state){.owner = frame.owner, .goal = item->id, .player = player};
+                member_step(scene, frame.owner);
+            }
+            if (trace) LOG("POINTER member player %d %s %llu", player + 1, member_walk.goal ? "walk to" : "confirm", (unsigned long long)item->id);
+        }
+    } else member_walk.goal = 0;
+    ((void (*)(void *))(base + 0x1e60a0))(scene);
 }
 /* Rhythm Toys. A toy scene uses the minigame scene class (main+0xd2b730). Its list at +0x38 (node:
    next, previous, object) holds the toy's game object.
@@ -635,7 +746,7 @@ void rh_menu_install(const module_t *main) {
     if (getenv("RH_POINTER_DISABLE")) return;
     const struct { unsigned slot, function; } expected[] = {
         {0xd0a908, 0x135ba0}, {0xd1b0c8, 0x1d1410}, {0xd0bd18, 0x135060},
-        {0xd0a5a8, 0x123960},
+        {0xd0a5a8, 0x123960}, {0xd1cdf0, 0x1e60a0},
     };
     for (unsigned i = 0; i < sizeof expected / sizeof expected[0]; ++i)
         if (main->data_off > expected[i].slot || main->patch_off < expected[i].slot + 8 || ptr(base, expected[i].slot) != base + expected[i].function)
@@ -652,6 +763,7 @@ void rh_menu_install(const module_t *main) {
         else if (*slot == base + 0x123960) { *slot = dialog_update; ++count; }
     }
     *(void **)(base + 0xd1b0c8) = map_input;
+    *(void **)(base + 0xd1cdf0) = member_input;
     start_pointer_file();
     LOG("Menu pointer adapter installed: %u shared method slots", count);
 }

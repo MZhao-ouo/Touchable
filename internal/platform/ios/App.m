@@ -4,12 +4,14 @@
 #import <GameController/GameController.h>
 #import <AVFAudio/AVFAudio.h>
 #include <pthread.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <errno.h>
 #include "ss_display.h"
 #include "ss_haptics.h"
 #include "ss_touch.h"
+#include "ss_audren.h"
 #include "ss_pointer.h"
 #include "ss_health_bars.h"
 #include "TouchLayout.h"
@@ -43,12 +45,57 @@ static NSString *audioRouteName(AVAudioSessionRouteDescription *route) {
     return [names componentsJoinedByString:@","];
 }
 /* Switch the game while it runs, like docking a Switch (dm_opmode_set). Any thread. */
+static BOOL voicePlay;   /* the "Voice play" setting; it keeps TV mode on */
 static void followAudioRoute(const char *why) {
     if (!tvModeAudioRoute) return;
     AVAudioSessionRouteDescription *route = AVAudioSession.sharedInstance.currentRoute;
-    BOOL tv = audioRouteIsTV(route);
+    BOOL tv = voicePlay || audioRouteIsTV(route);
     fprintf(stderr, "TV mode: audio output %s -> %s (%s)\n", audioRouteName(route).UTF8String, tv ? "TV" : "handheld", why);
     dm_opmode_set(tv);
+}
+
+/* Voice play: a clap or a short sound into the microphone presses A for player 1. The game's audio
+   output is Apple's voice-processing unit (ss_audio_renderer.c), whose echo canceller removes the game
+   sound from the microphone. voiceInput gets the cleaned input at the hardware buffer size (about 5 ms),
+   so the press comes a few milliseconds after the sound starts; the game's TV latency adjustment covers
+   the rest. An onset is a 32-sample peak above the sensitivity floor and well above the recent average
+   level; a new onset waits 100 ms. Presses happen only while the screen shows a single-player level
+   (voiceArmed, set by the controls). */
+/* Games that do not compile ss_audio_renderer.c (Silksong) link this empty default. They never turn on
+   voice play. The renderer's strong definition replaces it in Rhythm Heaven. */
+__attribute__((weak)) void ss_audio_set_input_handler(ss_audio_input_handler handler) { (void)handler; }
+static void showMessage(NSString *message);
+static _Atomic int voiceArmed;
+static _Atomic unsigned voicePresses, voiceSounds;
+static _Atomic float voiceLastPeak;
+static float voiceFloor = 0.10f, voiceRatio = 5;   /* "medium"; TouchableVoiceSensitivity sets them */
+static void voiceInput(const float *samples, uint32_t frames, int rate) {
+    static float average;
+    static double quiet = 1;   /* seconds since the last onset */
+    for (uint32_t start = 0; start < frames; start += 32) {
+        float peak = 0;
+        for (uint32_t i = start; i < frames && i < start + 32; ++i) peak = fmaxf(peak, fabsf(samples[i]));
+        quiet += 32.0 / rate;
+        if (peak > voiceFloor && peak > average * voiceRatio + 0.01f && quiet > 0.1) {
+            quiet = 0;
+            atomic_fetch_add(&voiceSounds, 1);
+            if (atomic_load(&voiceArmed)) {
+                ss_input_press_player(0, 1ull << SS_BUTTON_A);
+                atomic_store(&voiceLastPeak, peak);
+                atomic_fetch_add(&voicePresses, 1);
+            }
+        }
+        average += (peak - average) * 0.005f;   /* about 130 ms at 48 kHz */
+    }
+}
+/* Once: the microphone adds a delay; the game's TV latency adjustment removes it. */
+static void voiceDelayHint(void) {
+    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    if ([defaults boolForKey:@"TouchableVoiceDelayHint"]) return;
+    [defaults setBool:YES forKey:@"TouchableVoiceDelayHint"];
+    BOOL chinese = [NSLocale.preferredLanguages.firstObject hasPrefix:@"zh"];
+    showMessage(chinese ? @"声音游玩已开启。麦克风会带来少许延迟，请先在游戏中调整：开始菜单 >“电视机延迟校正”。"
+                        : @"Voice play is on. The microphone adds a short delay, so first adjust it in the game: Start Menu > TV latency adjustment (电视机延迟校正).");
 }
 
 static CAMetalLayer *gameLayer;
@@ -56,6 +103,7 @@ static UIViewController *gameController;
 static uint64_t touchButtons;
 static uint64_t zoneButtons;
 static uint64_t pointerButtons;
+static uint64_t splitButtons[2];   /* the two-player touch halves (SplitZone) */
 @class TouchZone;
 static NSHashTable<TouchZone *> *touchZones;
 static BOOL gameStarted;
@@ -99,12 +147,18 @@ void front_save_failed(int error) {
     showMessage(error == ENOSPC ? @"Not enough storage. This progress was not saved. Free up storage on the device." : @"This progress was not saved. Keep the log to find the cause.");
 }
 
+/* In multiplayer (ss_input_players() > 1) each real controller is one player, in connection order, and
+   the two touch halves are players 1 and 2. Otherwise every controller and touch control is player 1. */
 static void updateInput(void) {
-    uint64_t mask = 0;
-    int32_t x = 0, y = 0;
+    uint64_t pads[4] = {0}, all = 0;
+    int32_t xs[4] = {0}, ys[4] = {0};
+    int players = ss_input_players(), index = 0;
     for (GCController *controller in GCController.controllers) {
         GCExtendedGamepad *pad = controller.extendedGamepad;
         if (!pad) continue;
+        int slot = players > 1 ? MIN(index, 3) : 0;
+        ++index;
+        uint64_t mask = 0;
         /* Apple uses the bottom/right face positions for A/B. */
         if (pad.buttonB.pressed) mask |= 1ull << 0;
         if (pad.buttonA.pressed) mask |= 1ull << 1;
@@ -123,15 +177,18 @@ static void updateInput(void) {
         if (pad.dpad.right.pressed) mask |= 1ull << 14;
         if (pad.dpad.down.pressed) mask |= 1ull << 15;
         if (fabsf(pad.leftThumbstick.xAxis.value) > 0.15f || fabsf(pad.leftThumbstick.yAxis.value) > 0.15f) {
-            x = (int32_t)(pad.leftThumbstick.xAxis.value * 32767);
-            y = (int32_t)(pad.leftThumbstick.yAxis.value * 32767);
+            xs[slot] = (int32_t)(pad.leftThumbstick.xAxis.value * 32767);
+            ys[slot] = (int32_t)(pad.leftThumbstick.yAxis.value * 32767);
         }
         if (hypot(pad.leftThumbstick.xAxis.value, pad.leftThumbstick.yAxis.value) > 0.5) mask |= 1ull << 62;
         if (hypot(pad.rightThumbstick.xAxis.value, pad.rightThumbstick.yAxis.value) > 0.5) mask |= 1ull << 63;
+        pads[slot] |= mask;
+        all |= mask;
     }
-    noteControllerKeys(mask);
-    mask &= ~((uint64_t)SS_STICK_KEYS << 62);
-    ss_input_set(mask | touchButtons | zoneButtons | pointerButtons, x, y);
+    noteControllerKeys(all);
+    for (int slot = 0; slot < 4; ++slot) pads[slot] &= ~((uint64_t)SS_STICK_KEYS << 62);
+    ss_input_set(pads[0] | touchButtons | zoneButtons | pointerButtons | splitButtons[0], xs[0], ys[0]);
+    for (int slot = 1; slot < 4; ++slot) ss_input_set_player(slot, pads[slot] | (slot == 1 ? splitButtons[1] : 0), xs[slot], ys[slot]);
 }
 
 /* The outline of a touch button. The user's sketch of 2026-10-23 makes ZL and ZR slanted and R a diamond. */
@@ -800,6 +857,151 @@ static NSString *buttonSymbol(int button) {
 - (void)touchesCancelled:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event { [self touchesEnded:touches withEvent:event]; }
 @end
 
+/* Two players on one screen (multiplayer levels). The left half is player 1 and the right half is
+   player 2. A level with a second key (◀ or B) splits each half: player 1 has the second key above and A
+   below; player 2 has A above and the second key below. Otherwise the whole half is A. The look follows
+   the single-player areas: an A-only half shows nothing, a split half shows faint key labels and lines,
+   and each finger gets the touch glow with its key as the caption. */
+@interface SplitZone : UIView
+@property(nonatomic) int other;   /* the second key (NpadButton bit), or -1 */
+@property(nonatomic, strong) NSMutableDictionary<NSValue *, NSNumber *> *touchKeys;   /* player << 8 | button */
+@property(nonatomic, strong) NSArray<UILabel *> *labels;
+@property(nonatomic, strong) NSArray<UIView *> *dividers;
+@property(nonatomic, strong) NSMutableDictionary<NSValue *, TouchFeedbackView *> *feedbackViews;
+- (void)applyOther:(int)other;
+- (void)cancelInput;
+@end
+@implementation SplitZone
+- (instancetype)init {
+    if ((self = [super initWithFrame:CGRectZero])) {
+        self.multipleTouchEnabled = YES;
+        _other = -2;
+        _touchKeys = [NSMutableDictionary dictionary];
+        _feedbackViews = [NSMutableDictionary dictionary];
+        NSMutableArray *labels = [NSMutableArray array], *dividers = [NSMutableArray array];
+        for (int i = 0; i < 4; ++i) {
+            UILabel *label = [UILabel new];
+            label.textColor = [UIColor colorWithWhite:1 alpha:0.28];
+            label.textAlignment = NSTextAlignmentCenter;
+            label.font = [UIFont systemFontOfSize:36 weight:UIFontWeightBold];
+            label.userInteractionEnabled = NO;
+            [self addSubview:label]; [labels addObject:label];
+        }
+        for (int i = 0; i < 3; ++i) {
+            UIView *line = [UIView new];
+            line.backgroundColor = [UIColor colorWithWhite:1 alpha:0.10];
+            line.userInteractionEnabled = NO;
+            [self addSubview:line]; [dividers addObject:line];
+        }
+        _labels = labels; _dividers = dividers;
+        [self applyOther:-1];
+    }
+    return self;
+}
+- (void)applyOther:(int)other {
+    if (other == self.other) return;
+    self.other = other;
+    [self cancelInput];
+    [self setNeedsLayout];
+}
+/* Areas: 0 player 1 upper, 1 player 1 lower, 2 player 2 upper, 3 player 2 lower. */
+- (int)keyOfArea:(int)area {
+    if (self.other < 0) return SS_BUTTON_A;
+    BOOL upper = !(area & 1);
+    return area < 2 ? (upper ? self.other : SS_BUTTON_A) : (upper ? SS_BUTTON_A : self.other);
+}
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    CGSize size = self.bounds.size;
+    CGFloat half = size.width / 2;
+    BOOL two = self.other >= 0;
+    for (int area = 0; area < 4; ++area) {
+        UILabel *label = self.labels[area];
+        label.hidden = !two;
+        label.text = buttonSymbol([self keyOfArea:area]);
+        CGFloat x = area < 2 ? 0 : half, height = two ? size.height / 2 : size.height;
+        label.frame = CGRectMake(x, two && (area & 1) ? height : 0, half, height);
+    }
+    self.dividers[0].frame = CGRectMake(half - 0.5, 16, 1, size.height - 32);
+    self.dividers[0].hidden = !two;
+    self.dividers[1].hidden = self.dividers[2].hidden = !two;
+    self.dividers[1].frame = CGRectMake(16, size.height / 2 - 0.5, half - 32, 1);
+    self.dividers[2].frame = CGRectMake(half + 16, size.height / 2 - 0.5, half - 32, 1);
+}
+- (NSNumber *)keyAt:(CGPoint)point {
+    CGSize size = self.bounds.size;
+    int player = point.x < size.width / 2 ? 0 : 1;
+    int area = player * 2 + (self.other >= 0 && point.y >= size.height / 2 ? 1 : 0);
+    return @(player << 8 | [self keyOfArea:area]);
+}
+- (void)updateKeys {
+    uint64_t masks[2] = {0, 0};
+    for (NSNumber *key in self.touchKeys.allValues) masks[key.intValue >> 8 & 1] |= 1ull << (key.intValue & 0xff);
+    for (int player = 0; player < 2; ++player) {
+        uint64_t pressed = masks[player] & ~splitButtons[player];
+        for (int bit = 0; pressed; ++bit, pressed >>= 1) if (pressed & 1) notePress(1ull << bit);
+        splitButtons[player] = masks[player];
+    }
+    updateInput();
+}
+- (void)cancelInput {
+    [self.touchKeys removeAllObjects];
+    for (TouchFeedbackView *feedback in self.feedbackViews.allValues) {
+        [feedback.layer removeAllAnimations];
+        [feedback removeFromSuperview];
+    }
+    [self.feedbackViews removeAllObjects];
+    [self updateKeys];
+}
+- (void)setHidden:(BOOL)hidden {
+    if (hidden && !self.hidden) [self cancelInput];
+    [super setHidden:hidden];
+}
+/* The same placement as TouchZone: the glow follows the finger, the caption stays on screen above it. */
+- (void)moveFeedback:(TouchFeedbackView *)feedback touch:(UITouch *)touch {
+    CGPoint point = [touch locationInView:self];
+    feedback.center = point;
+    CGFloat x = MAX(20 - self.frame.origin.x, MIN(point.x, self.superview.bounds.size.width - 20 - self.frame.origin.x));
+    CGFloat y = MAX(point.y - 60, self.superview.safeAreaInsets.top + 20 - self.frame.origin.y);
+    feedback.caption.center = CGPointMake(x - feedback.frame.origin.x, y - feedback.frame.origin.y);
+}
+- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    for (UITouch *touch in touches) {
+        NSValue *key = [NSValue valueWithNonretainedObject:touch];
+        NSNumber *value = [self keyAt:[touch locationInView:self]];
+        self.touchKeys[key] = value;
+        TouchFeedbackView *feedback = [TouchFeedbackView new];
+        feedback.caption.text = buttonSymbol(value.intValue & 0xff);
+        self.feedbackViews[key] = feedback;
+        [self addSubview:feedback];
+        [self moveFeedback:feedback touch:touch];
+    }
+    [self updateKeys];
+}
+/* A finger keeps the key it pressed first, so a slide does not press the other player's key. The glow follows it. */
+- (void)touchesMoved:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    for (UITouch *touch in touches) {
+        TouchFeedbackView *feedback = self.feedbackViews[[NSValue valueWithNonretainedObject:touch]];
+        if (feedback) [self moveFeedback:feedback touch:touch];
+    }
+}
+- (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    for (UITouch *touch in touches) {
+        NSValue *key = [NSValue valueWithNonretainedObject:touch];
+        [self.touchKeys removeObjectForKey:key];
+        TouchFeedbackView *feedback = self.feedbackViews[key];
+        [self.feedbackViews removeObjectForKey:key];
+        if (feedback) {
+            [UIView animateWithDuration:0.16 delay:0 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction animations:^{
+                feedback.alpha = 0;
+            } completion:^(BOOL finished) { [feedback removeFromSuperview]; }];
+        }
+    }
+    [self updateKeys];
+}
+- (void)touchesCancelled:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event { [self touchesEnded:touches withEvent:event]; }
+@end
+
 /* Menus receive positions. Visible button hints keep the normal hold/release behavior. */
 @interface PointerView : UIView
 @property(nonatomic) BOOL fullView;   /* the game picture fills the view; otherwise it has a 16:9 fit */
@@ -970,6 +1172,7 @@ static void *runGame(void *unused) {
 @property(nonatomic, strong) NSMutableArray<PadButton *> *buttons;
 @property(nonatomic, strong) NSMutableArray<TouchZone *> *zones;
 @property(nonatomic, strong) AdaptiveZone *leftZone;
+@property(nonatomic, strong) SplitZone *splitZone;   /* two players on one screen */
 @property(nonatomic, strong) TouchZone *singleLeftZone;
 @property(nonatomic) BOOL rhythmLayout;
 @property(nonatomic, strong) PointerView *pointerView;
@@ -1038,6 +1241,9 @@ static void *runGame(void *unused) {
         self.singleLeftZone.feedbackEnabled = YES;
         self.singleLeftZone.hidden = YES;
         [self.view addSubview:self.leftZone];
+        self.splitZone = [SplitZone new];
+        self.splitZone.hidden = YES;
+        [self.view addSubview:self.splitZone];
         [self.view addSubview:self.singleLeftZone];
         [self.view addSubview:a];
         [self.zones addObject:a];
@@ -1160,6 +1366,28 @@ static void *runGame(void *unused) {
             [self.view setNeedsLayout];
             if (getenv("RH_MENU_TRACE")) fprintf(stderr, "Touch full controller: %s\n", fullPad ? "shown" : "hidden");
         }
+        /* Multiplayer levels: two players share the screen (SplitZone). The second key is the level's
+           left-area key when it is not A (◀ or B); a level with A only gets A in each half. */
+        BOOL split = inLevel && !fullPad && ss_input_players() > 1;
+        int other = ss_touch_layout(hint) == SS_TOUCH_ONE || ss_touch_layout(hint) == SS_TOUCH_TWO ? ss_touch_first(hint) : -1;
+        if (other == SS_BUTTON_A || (ss_touch_extra(hint) & SS_TOUCH_EITHER)) other = -1;   /* "A or ◀" needs A only */
+        [self.splitZone applyOther:other];
+        if (split == self.splitZone.hidden) {
+            [self.splitZone cancelInput];
+            [self.zones.firstObject cancelInput];
+            fprintf(stderr, "Touch two players: %s (second key %d)\n", split ? "shown" : "hidden", other);
+        }
+        self.splitZone.hidden = !split;
+        /* Voice play presses A only in a single-player level, never in menus or the pause menu. */
+        BOOL armed = voicePlay && inLevel && !split;
+        if (atomic_exchange(&voiceArmed, armed) != armed) fprintf(stderr, "Voice play: %s\n", armed ? "listening" : "paused");
+        if (voicePlay) {
+            static unsigned loggedPresses, loggedSounds;
+            unsigned presses = atomic_load(&voicePresses), sounds = atomic_load(&voiceSounds);
+            if (presses != loggedPresses) fprintf(stderr, "Voice play: press %u (peak %.3f)\n", presses, atomic_load(&voiceLastPeak));
+            else if (sounds != loggedSounds) fprintf(stderr, "Voice play: sound %u outside a level\n", sounds);
+            loggedPresses = presses; loggedSounds = sounds;
+        }
         if (!inLevel) hint = SS_TOUCH_MENU;
         BOOL menu = ss_touch_layout(hint) == SS_TOUCH_MENU;
         BOOL dpad = ss_touch_layout(hint) == SS_TOUCH_DPAD;
@@ -1181,7 +1409,7 @@ static void *runGame(void *unused) {
         self.singleLeftZone.hidden = !single;
         BOOL directMenu = hasPointer && (frame.mode == SS_POINTER_MENU || frame.mode == SS_POINTER_MAP);
         TouchZone *a = self.zones.firstObject;
-        a.hidden = directMenu || fullPad;
+        a.hidden = directMenu || fullPad || split;
         if (!self.loggedControls || self.levelControlsVisible != inLevel) {
             if (self.levelControlsVisible && !inLevel) [a cancelInput];
             self.loggedControls = YES;
@@ -1219,6 +1447,10 @@ static void *runGame(void *unused) {
             for (NSUInteger i = 0; i < 4; ++i) self.buttons[i].hidden = NO;
             y.bit = 1ull << 3;
             y.hidden = x.hidden = NO;
+        }
+        if (split) {
+            self.leftZone.hidden = self.singleLeftZone.hidden = YES;
+            for (NSUInteger i = 0; i < 4; ++i) self.buttons[i].hidden = YES;
         }
         for (NSUInteger i = 9; i < self.buttons.count; ++i) self.buttons[i].hidden = !fullPad || self.loadingScreen;   /* A, ZR */
         /* A loading screen hides the visible controls. The transparent A area stays. */
@@ -1358,6 +1590,7 @@ static void *runGame(void *unused) {
         self.zones[0].frame = CGRectMake(half + 4, top, contentRight - half - 8, contentBottom - top - 6);
         self.leftZone.frame = CGRectMake(contentLeft + 4, top, half - contentLeft - 8, contentBottom - top - 6);
         self.singleLeftZone.frame = self.leftZone.frame;
+        self.splitZone.frame = CGRectMake(contentLeft + 4, top, contentRight - contentLeft - 8, contentBottom - top - 6);
         CGFloat controlBottom = self.verticalBars ? contentBottom : bottom;
         CGFloat cx = left + 74, cy = controlBottom - 74, d = 54;
         CGFloat bar = (size.width - MIN(size.width, size.height * 16 / 9)) / 2;
@@ -1479,6 +1712,7 @@ static void *runGame(void *unused) {
     [self.dpad cancelInput];
     for (TouchZone *zone in self.zones) [zone cancelInput];
     [self.leftZone applyHint:SS_TOUCH_MENU];
+    [self.splitZone cancelInput];
     [self.pointerView cancelInput];
 }
 - (void)viewDidAppear:(BOOL)animated {
@@ -1520,7 +1754,7 @@ static void *runGame(void *unused) {
 }
 - (void)sceneWillResignActive:(UIScene *)scene {
     [(GameViewController *)gameController cancelTouches];
-    touchButtons = zoneButtons = pointerButtons = 0; ss_pointer_clear(); ss_input_set(0, 0, 0);
+    touchButtons = zoneButtons = pointerButtons = splitButtons[0] = splitButtons[1] = 0; ss_pointer_clear(); ss_input_set(0, 0, 0);
     if (gameStarted) { dm_focus_set(0); dm_audio_suspend(1); dm_gfx_suspend(1); }
 }
 - (void)sceneDidBecomeActive:(UIScene *)scene {
@@ -1600,6 +1834,12 @@ static void *runGame(void *unused) {
         if (rate.integerValue && [rates isKindOfClass:NSArray.class] && [rates containsObject:@(rate.integerValue)])
             setenv("SS_DISPLAY_HZ", rate.UTF8String, 1);
         if ([playerSettings[@"HealthBars"] boolValue] && [defaults boolForKey:@"TouchableHealthBars"]) setenv("SS_HEALTH_BARS", "1", 1);
+        voicePlay = tvModeAudioRoute && [playerSettings[@"VoicePlay"] boolValue] && [defaults boolForKey:@"TouchableVoicePlay"];
+        NSString *sensitivity = [defaults stringForKey:@"TouchableVoiceSensitivity"] ?: @"medium";
+        if ([sensitivity isEqualToString:@"high"]) { voiceFloor = 0.05f; voiceRatio = 4; }
+        else if ([sensitivity isEqualToString:@"low"]) { voiceFloor = 0.18f; voiceRatio = 6; }
+        if ([playerSettings[@"VoicePlay"] boolValue])
+            fprintf(stderr, "Player settings: voice play %s, sensitivity %s\n", voicePlay ? "on" : "off", sensitivity.UTF8String);
         fprintf(stderr, "Player settings: render height %s (SS_RENDER_HEIGHT=%s), refresh rate %s (SS_DISPLAY_HZ=%s), health bars %s\n",
                 (height ?: @"default").UTF8String, getenv("SS_RENDER_HEIGHT") ?: "720",
                 (rate ?: @"default").UTF8String, getenv("SS_DISPLAY_HZ") ?: "60", getenv("SS_HEALTH_BARS") ? "on" : "off");
@@ -1609,17 +1849,32 @@ static void *runGame(void *unused) {
     if (displayHz && atoi(displayHz) == 120) displayHzWanted = 120;
     setenv("SS_DISPLAY_HZ", "60", 1);
     AVAudioSession *audio = AVAudioSession.sharedInstance;
-    [audio setCategory:AVAudioSessionCategoryPlayback error:nil];
+    /* Voice play records and plays. The output stays on the speaker (not the earpiece) and on Bluetooth A2DP. */
+    if (voicePlay) [audio setCategory:AVAudioSessionCategoryPlayAndRecord mode:AVAudioSessionModeDefault
+                              options:AVAudioSessionCategoryOptionDefaultToSpeaker | AVAudioSessionCategoryOptionAllowBluetoothA2DP |
+                                      AVAudioSessionCategoryOptionAllowAirPlay error:nil];
+    else [audio setCategory:AVAudioSessionCategoryPlayback error:nil];
     NSNumber *ioBuffer = [NSBundle.mainBundle objectForInfoDictionaryKey:@"TouchableAudioIOBufferDuration"];
     if (ioBuffer) [audio setPreferredIOBufferDuration:ioBuffer.doubleValue error:nil];
     [audio setActive:YES error:nil];
     if (tvModeAudioRoute) {
         /* The start mode comes from the audio output. A launch environment (DM_OPMODE from devicectl) wins for tests. */
         AVAudioSessionRouteDescription *route = audio.currentRoute;
-        if (!launchModeSet) setenv("DM_OPMODE", audioRouteIsTV(route) ? "1" : "0", 1);
+        if (!launchModeSet) setenv("DM_OPMODE", voicePlay || audioRouteIsTV(route) ? "1" : "0", 1);
         fprintf(stderr, "TV mode: launch %s, audio output %s\n", atoi(getenv("DM_OPMODE") ?: "0") ? "TV" : "handheld", audioRouteName(route).UTF8String);
         [[NSNotificationCenter defaultCenter] addObserverForName:AVAudioSessionRouteChangeNotification object:audio queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
             followAudioRoute("route change");
+        }];
+    }
+    /* The handler must be set before the game opens its audio renderer (the game thread starts later, in
+       viewDidAppear). The permission prompt does not block that; until it is granted, the input is silent. */
+    if (voicePlay) {
+        ss_audio_set_input_handler(voiceInput);
+        [AVAudioApplication requestRecordPermissionWithCompletionHandler:^(BOOL granted) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                fprintf(stderr, "Voice play: microphone permission %s\n", granted ? "granted" : "denied");
+                if (granted) voiceDelayHint();
+            });
         }];
     }
     ss_haptics_ios_init();

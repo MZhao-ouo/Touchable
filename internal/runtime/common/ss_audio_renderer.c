@@ -137,10 +137,32 @@ static void *silent_sink(void *argument) {
     return NULL;
 }
 
-static void unit_open(ar_device *device) {
+/* Voice play (iOS): the platform layer registers an input handler before the game starts. The output
+   unit is then Apple's voice-processing unit, which also records the microphone. Its echo canceller
+   removes the game sound that this same unit plays, so the handler receives the player's sound only.
+   The handler runs on the audio thread with mono float samples. Automatic gain stays off, so levels
+   do not drift. Without a handler the unit is a plain RemoteIO output, as before. */
+static ss_audio_input_handler input_handler;
+void ss_audio_set_input_handler(ss_audio_input_handler handler) { input_handler = handler; }
+#if TARGET_OS_IPHONE
+static float input_samples[4096];
+static OSStatus unit_input(void *context, AudioUnitRenderActionFlags *flags, const AudioTimeStamp *time, UInt32 bus,
+                           UInt32 frames, AudioBufferList *unused) {
+    (void)unused;
+    ar_device *device = context;
+    if (frames > 4096) return noErr;
+    AudioBufferList list = {1, {{1, frames * (UInt32)sizeof(float), input_samples}}};
+    if (AudioUnitRender(device->unit, flags, time, bus, frames, &list) == noErr && input_handler)
+        input_handler(input_samples, frames, device->rate);
+    return noErr;
+}
+#endif
+
+static int unit_try_open(ar_device *device, int voice) {
+    (void)voice;   /* the Mac host has no voice-processing unit */
     AudioComponentDescription description = {.componentType = kAudioUnitType_Output,
 #if TARGET_OS_IPHONE
-        .componentSubType = kAudioUnitSubType_RemoteIO,
+        .componentSubType = voice ? kAudioUnitSubType_VoiceProcessingIO : kAudioUnitSubType_RemoteIO,
 #else
         .componentSubType = kAudioUnitSubType_DefaultOutput,
 #endif
@@ -151,9 +173,30 @@ static void unit_open(ar_device *device) {
         .mFormatFlags = kLinearPCMFormatFlagIsSignedInteger | kLinearPCMFormatFlagIsPacked,
         .mBytesPerPacket = 4, .mFramesPerPacket = 1, .mBytesPerFrame = 4, .mChannelsPerFrame = 2, .mBitsPerChannel = 16};
     AURenderCallbackStruct callback = {unit_render, device};
-    if (AudioUnitSetProperty(device->unit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, 0, &format, sizeof(format)) ||
-        AudioUnitSetProperty(device->unit, kAudioUnitProperty_SetRenderCallback, kAudioUnitScope_Input, 0, &callback, sizeof(callback)) ||
-        AudioUnitInitialize(device->unit)) die("Cannot configure the audio renderer output unit");
+    int failed = AudioUnitSetProperty(device->unit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, 0, &format, sizeof(format)) ||
+                 AudioUnitSetProperty(device->unit, kAudioUnitProperty_SetRenderCallback, kAudioUnitScope_Input, 0, &callback, sizeof(callback));
+#if TARGET_OS_IPHONE
+    if (voice && !failed) {
+        UInt32 on = 1, off = 0;
+        AudioStreamBasicDescription input = {.mSampleRate = device->rate, .mFormatID = kAudioFormatLinearPCM,
+            .mFormatFlags = kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked, .mBytesPerPacket = 4, .mFramesPerPacket = 1,
+            .mBytesPerFrame = 4, .mChannelsPerFrame = 1, .mBitsPerChannel = 32};
+        AURenderCallbackStruct input_callback = {unit_input, device};
+        failed = AudioUnitSetProperty(device->unit, kAudioOutputUnitProperty_EnableIO, kAudioUnitScope_Input, 1, &on, sizeof(on)) ||
+                 AudioUnitSetProperty(device->unit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Output, 1, &input, sizeof(input)) ||
+                 AudioUnitSetProperty(device->unit, kAudioOutputUnitProperty_SetInputCallback, kAudioUnitScope_Global, 0, &input_callback, sizeof(input_callback));
+        AudioUnitSetProperty(device->unit, kAUVoiceIOProperty_VoiceProcessingEnableAGC, kAudioUnitScope_Global, 0, &off, sizeof(off));
+    }
+#endif
+    if (!failed) failed = AudioUnitInitialize(device->unit) != noErr;
+    if (failed) { AudioComponentInstanceDispose(device->unit); device->unit = NULL; }
+    return !failed;
+}
+static void unit_open(ar_device *device) {
+    int voice = input_handler != NULL;
+    if (voice && unit_try_open(device, 1)) { LOG("Audio renderer: voice-processing output with echo-cancelled microphone"); return; }
+    if (voice) LOG("Audio renderer: voice-processing output failed; using the plain output without voice input");
+    if (!unit_try_open(device, 0)) die("Cannot configure the audio renderer output unit");
 }
 
 static void sink_start(ar_device *device) {

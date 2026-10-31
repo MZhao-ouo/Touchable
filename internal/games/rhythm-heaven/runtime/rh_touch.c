@@ -22,7 +22,7 @@
 #include "ss_touch.h"
 #include <string.h>
 
-enum { K_A = 1, K_B = 2, K_LEFT = 4, K_UP = 8, K_RIGHT = 16, K_DOWN = 32, K_MANY = 64, K_SPELL = 128, K_PAD = 256 };
+enum { K_A = 1, K_B = 2, K_LEFT = 4, K_UP = 8, K_RIGHT = 16, K_DOWN = 32, K_MANY = 64, K_SPELL = 128, K_PAD = 256, K_EITHER = 512 };
 typedef struct { const char *name; unsigned keys; } scene_keys;
 static const scene_keys scenes[] = {
     {"birds", K_A}, {"block", K_A}, {"cooking", K_A}, {"flydisc", K_A}, {"fugu", K_A}, {"grasp", K_A},
@@ -34,7 +34,7 @@ static const scene_keys scenes[] = {
     {"bacteria", K_A | K_DOWN}, {"blanco", K_A | K_DOWN}, {"cars", K_A | K_DOWN}, {"hurdle", K_A | K_DOWN},
     {"owl", K_A | K_DOWN}, {"parasol", K_A | K_DOWN}, {"skater", K_A | K_DOWN}, {"softcatch", K_A | K_DOWN},
     {"brush", K_A | K_LEFT}, {"clap", K_A | K_LEFT}, {"commander", K_A | K_LEFT}, {"crab", K_A | K_LEFT},
-    {"onion", K_A | K_LEFT}, {"soccer", K_A | K_LEFT}, {"talk", K_A | K_LEFT}, {"tono2", K_A | K_LEFT},
+    {"onion", K_A | K_LEFT | K_EITHER}, {"soccer", K_A | K_LEFT}, {"talk", K_A | K_LEFT}, {"tono2", K_A | K_LEFT | K_EITHER},
     {"trolley", K_A | K_LEFT}, {"wiper", K_A | K_LEFT},
     {"rolling", K_A | K_RIGHT},
     {"dancer", K_A | K_LEFT | K_RIGHT}, {"master", K_A | K_LEFT | K_RIGHT},
@@ -72,7 +72,8 @@ static rh_touch_hint hint_of(const rh_touch_state *state) {
     int found[5], count = 0;
     for (int i = 0; i < 5; ++i) if (state->keys & order[i].key) found[count++] = order[i].button;
     if (count == 0) return state->keys & K_A ? (rh_touch_hint){SS_TOUCH_ONE, SS_BUTTON_A, 0, 0} : dpad;
-    if (count == 1) return (rh_touch_hint){SS_TOUCH_ONE, found[0], 0, 0};
+    int either = state->keys & K_EITHER ? SS_TOUCH_EITHER : 0;   /* "A or ◀": onion and tono2 */
+    if (count == 1) return (rh_touch_hint){SS_TOUCH_ONE, found[0], 0, either};
     if (count == 2) return (rh_touch_hint){SS_TOUCH_TWO, found[0], found[1], 0};
     return dpad;
 }

@@ -71,6 +71,17 @@ int main(void) {
     open_path("data:/graph/prologue/wiper/type_00/prologue.spr");
     expect(SS_TOUCH_ONE, SS_BUTTON_LEFT, 0);
 
+    /* "A or ◀" levels mark ◀ as an alternative to A. A level with ◀ as its own action does not. */
+    open_path("data:/graph/menu/main_menu/main.spr");
+    open_path("data:/graph/prologue/onion/type_00/prologue.spr");
+    assert(hint.layout == SS_TOUCH_ONE && hint.first == SS_BUTTON_LEFT && hint.extra == SS_TOUCH_EITHER);
+    open_path("data:/graph/menu/main_menu/main.spr");
+    open_path("data:/graph/prologue/tono2/type_00/prologue.spr");
+    assert(hint.layout == SS_TOUCH_ONE && hint.first == SS_BUTTON_LEFT && hint.extra == SS_TOUCH_EITHER);
+    open_path("data:/graph/menu/main_menu/main.spr");
+    open_path("data:/graph/prologue/commander/type_00/prologue.spr");
+    expect(SS_TOUCH_ONE, SS_BUTTON_LEFT, 0);
+
     /* Drum Lessons show the full controller. Modes with many buttons and unknown scenes keep the D-pad. */
     open_path("data:/graph/scene/drummer/type_00/main.spr");
     open_path("data:/graph/prologue/drummer/type_00/prologue.spr");
